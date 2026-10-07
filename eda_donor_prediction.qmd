@@ -1,0 +1,2731 @@
+---
+title: "Exploratory Data Analysis: PBS Utah Major Donor Prediction"
+author: "Benjamin Hogan"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true
+  warning: false
+  message: false
+
+---
+
+## Introduction
+
+### Business Problem
+
+Congress ended federal funding for public broadcasting in 2025, and PBS Utah now expects a recurring shortfall of about $2 million per year. Major donors, defined as people who give $1,200 or more in a fiscal year, make up about 1% of the donor file but generate about 19% of donor revenue. PBS Utah does not currently have a reliable, data-driven way to find which non-major donors are most likely to move into major giving, or what level they are likely to reach.
+
+The larger project will produce a ranked prospect list. A classification model will estimate each current non-major donor's probability of giving $1,200 or more within 12 months and within 3 to 5 years, along with the most likely giving tier ($1,200, $2,000, $5,000, $10,000, or $15,000 and up). The main success measure is recall: at least 25% of donors who later convert should appear in the top 10% of the ranked list. The model will be compared against random selection and a recency, frequency, and value (RFV) baseline.
+
+### Purpose of This Analysis
+
+The problem statement leaves two things open until the data has been explored. The 25% recall target is supposed to be confirmed once the baseline conversion rate is known, and the 3 to 5 year window can only be tested if the data covers enough years. This notebook works through those questions and documents the data issues that will shape the modeling phase. It is my individual EDA, and the team will combine individual work into a group EDA later.
+
+### Data Concerns to Report
+
+The data is a synthetic replica of PBS Utah's donor data, and the rest of this notebook treats it as the real data. The items below are places where the data does not match its documentation or contains records that look like errors from the replication. They are collected here so they can be reported to Jeff, as the README asks. The checks behind each number are in the data quality section.
+
+::: {.callout-important}
+## Concerns with this release
+
+**Duplicate records**
+
+1. **Unite payments with a broken field.** 36,044 payments worth $447,530 have IDs starting with `SYN-DEF-`. Each is an exact copy of another payment except for one field: the donor ID is replaced with `SYN-ORPHAN` (33,733 rows), the campaign code is replaced with `SYN-ORPHAN` (1,225 rows), or the amount is set to $0 (1,086 rows). The student dictionary says every Unite link resolves, so these rows are not documented anywhere.
+2. **Soft credits with a broken field.** 113 soft credits with `SYN-DEF-` IDs are copies of other credits, with either the recipient replaced with `SYN-ORPHAN` (79 rows) or the amount set to $0 (34 rows). The dictionary describes `SYN-ORPHAN` recipients as credits that could not be matched, but all 79 repeat a credit that is matched to a person. There are also 79 exact duplicate soft credit rows.
+3. **Unlinked legacy gifts.** The README says some legacy rows link to no constituent, "as in the real data." All 216,128 of these rows (worth $6,299,033) repeat one specific linked gift on every column except the IDs. The number in each `SYN-UNMATCHED` account ID equals the source code number of the gift it copies, and 21.9% of linked gifts have a copy, evenly across gift sizes, gift kinds, and years. The rows appear to have been made by copying linked gifts, so the data cannot show which donors have incomplete histories, which is the real effect of unlinked gifts.
+
+**Values that do not behave as documented**
+
+4. **"Legacy" tender type and communication method.** 42.7% of Unite payments have the tender type "Legacy," which is not a documented value. Its share stays between 42.4% and 43.0% in every fiscal year, gift type, and donor group, so it does not appear to record anything. "Legacy" is also the most common communication method on solicitations (52.3% of solicitation rows), and it is not a documented value for that field either.
+5. **Constituent type.** The reference dictionary describes `Constituent Type` as a list of every type a constituent holds, but it is identical to `Primary Constituent Type` in every row.
+6. **Organizations in viewing and solicitation records.** The two organization records appear in Passport viewing (9 rows) and in solicitation history (858 rows).
+
+**Documentation and file mismatches**
+
+7. The README and student dictionary refer to `passport_engagement_by_genre.csv`, but the file in the release is `passport_viewing.csv`. Its columns match the description.
+8. The reference dictionary describes gift premium, acquisition score, affiliation, involvement, capacity rating, and engagement score tables, and none of them are in the release. The problem statement lists engagement and capacity scores as model inputs.
+9. The reference dictionary calls `ta_account_id` a unique key. In this release it identifies a household within one fiscal year and repeats across that household's gifts.
+
+**Giving patterns that differ from the business context**
+
+10. **Major donor share.** The problem statement says major donors ($1,200 or more a year) are about 1% of donors and give about 19% of donor revenue. From FY2021 to FY2026 they are 0.25% to 0.38% of donors and give 5.2% to 10.7% of revenue. Using a $1,000 threshold or combining spouses does not close the gap.
+11. **Annual totals cluster at tier amounts.** 89.9% of major donor-years from FY2021 to FY2026 total exactly $1,200, $2,000, $5,000, or $10,000. No non-major donor-year exceeds $1,100, only 2 fall between $750 and $1,199, and none fall strictly between $1,200 and $2,000. 97.3% of major donor-years include a soft credit. Real giving would usually be spread more smoothly around the threshold, so this may not reflect how PBS Utah donors actually give.
+12. **Passport viewing barely persists and is unrelated to giving.** Only 33.7% to 41.3% of each year's Passport viewers have viewing records the next year, while 75.1% to 79.5% of donors give again the next year. Among eligible donors with a viewing record, the rank correlation between titles viewed and prior-year giving is 0.01. If Passport is a member benefit, viewing would be expected to persist more and to track giving at least loosely.
+
+**Snapshot fields**
+
+13. **The UofU dollar fields are built from PBS giving.** Lifetime UofU Fundraising has a 0.90 correlation with lifetime PBS giving and is at least as large for 93.9% of donors. Previous FY UofU Cash is positive exactly when the person gave to PBS in FY2025 and equals their FY2025 PBS total for 77.2% of constituents. Prospect Committed Giving is positive exactly when the sustainer flag is set and equals FY2026 recurring giving for 83.4%. The data therefore has no information on giving capacity outside PBS Utah.
+14. **Classification fields match FY2026 giving.** Annual Giving Group (meaning listed as unknown) lines up with FY2026 giving bands: ND is no FY2026 gift, and PD, LD, SL, and CD are increasing FY2026 amounts, with CD starting at $1,200. Major Donor Class marks Broadcaster as exactly $1,200 in FY2026 and Director as $2,000 or more, which does not match the documented $1,000 to $4,999 and $5,000 to $9,999 ranges, and the Patron and Lapsed values never appear.
+
+**Households**
+
+15. **Spouses' giving is unconnected.** Among years in which one spouse gave (FY2021 on), the other spouse also gave in only 23.0%, the rank correlation between their annual totals is -0.01, and in none of the 236 major donor-years with a spouse on file was the spouse also major that year. Soft credits going to one spouse explain part of this, but couples usually give in more similar ways.
+:::
+
+The duplicate Unite payments and soft credits are removed. Unlinked legacy gifts cannot be attached to anyone, so they stay out of individual histories, and revenue before FY2021 is reported both with and without them.
+
+### Analytic Questions
+
+The questions fall into four groups. The first group has to be answered before the others, since the target definition and the base rate affect every later decision.
+
+**Target and feasibility**
+
+1. How many constituents give $1,200 or more in each fiscal year, and does this dataset reproduce the 1% of donors and 19% of revenue figures from the problem statement?
+2. What share of non-major donors convert to major giving within 12 months, and within 3 to 5 years?
+3. How are converters spread across the five tiers, and are there enough cases in the upper tiers to model tier separately?
+4. How many prediction dates can be backtested for each window, given that solicitation and Passport data only start in FY2021?
+
+**Population**
+
+5. Who should count as a current non-major donor at a prediction date, and how large is that group under different definitions?
+
+**Drivers**
+
+6. Which giving patterns come before a conversion? Candidates include prior-year giving close to $1,200, upgrade gifts, sustainer monthly amounts, additional gifts, length of giving history, and gifts made through donor-advised funds.
+7. Do solicitation volume, response history, Passport viewing, or University of Utah giving separate converters from non-converters?
+
+**Risks**
+
+8. How different is FY2026, the first year after federal funding ended?
+9. Did the cultivation program, where some selected donors were contacted and others were held out, change conversion rates? If it did, part of the outcome in those years reflects staff contact and not only donor behavior.
+10. How many donors have a spouse in the data, and how should spouses be handled when splitting training and test sets?
+
+### Variable Groups
+
+The nine tables group into eight sets of variables. The most important distinction for modeling is whether a variable changes over time or is a snapshot taken at the end of the data. Snapshot fields describe donors as of FY2026, so using them as features for earlier prediction dates would leak information from the future.
+
+| Group | Main fields | Source tables | Changes over time? |
+|---|---|---|---|
+| Keys and spouses | Constituent ID, spouse ID, legacy household account | Constituents, legacy payments | No |
+| Demographics and location | Age, gender, marital status, city, ZIP, state | Constituents | Snapshot |
+| PBS classifications | Annual giving group, constituent type, major donor class, sustainer flag, legacy circle | Constituents | Snapshot |
+| University of Utah giving | Lifetime UofU giving, previous FY UofU cash, prospect committed amount | Constituents | Snapshot (later found to be built from PBS giving) |
+| Giving history | Payment amount, date, recurring vs. outright, gift type, tender type, soft credits | Unite payments (FY2021 to FY2026), legacy payments (FY1984 to FY2020), soft credits | Yes |
+| Solicitation | Campaigns received, responses, communication method | Campaign members, campaign codes | Yes (FY2021 to FY2026) |
+| Passport viewing | Titles viewed and share watched, by genre | Passport viewing | Yes (FY2021 to FY2026) |
+| Cultivation program | Selected, contacted, held out, officer portfolio | Cultivation, officer portfolios | Yes (FY2022 to FY2025) |
+
+### Data Quality Issues
+
+A first pass through the tables and the three data dictionaries turned up the issues below. Each one is checked and quantified later in the notebook, mostly in the data quality section, and the notes below point to where the answer turned out to be different from what the first pass suggested.
+
+**Conflicting definitions**
+
+- The reference dictionary defines the Broadcaster major donor class as $1,000 to $4,999.99 per year, while the project threshold is $1,200. The major donor class field cannot stand in for the target.
+- The README says revenue totals should count payments only, while the student dictionary defines a person's fiscal-year giving as payments plus soft credits. These fit together once they are kept apart: revenue totals use payments, and individual giving (the target) uses payments plus soft credits.
+- The reference dictionary calls `ta_account_id` a unique key, but it repeats across rows. It appears to identify a household within one fiscal year.
+- The reference soft credit dictionary says Credit ID is unique and that a gift can be soft credited to both spouses. The student dictionary says some Credit IDs repeat as exact duplicates and that each soft credit goes to one person. I follow the student dictionary since it describes this release.
+
+**Linkage**
+
+- Some Unite payments carry the placeholder donor ID `SYN-ORPHAN`, which matches no constituent. These rows, along with $0 payments and payments with a placeholder campaign code, turn out to be duplicates of other payments with one field broken.
+- Some legacy gifts link to no constituent. They cannot be attached to a person, so they are left out of individual histories and reported separately in revenue totals. A small number of legacy gifts list two IDs, and those are spouse pairs. Because this project works at the individual level, I credit those gifts to the first listed constituent only and flag them. Dropping them is run as a sensitivity check.
+- The constituents table includes two organization records and many people who never gave.
+
+**Columns with no usable information**
+
+- Several fields are blank or hold a single value: the UofU degree and employment fields, UofU legacy gift, PBS legacy circle, pledge status, the legacy payment method and communication fields, legacy premiums, and every campaign code attribute except communication method. Because the campaign codes in this extract do not follow the 12 character structure in Supplement 1 of the reference dictionary, that breakdown cannot be used.
+- The problem statement lists UofU engagement and capacity scores as inputs, but those tables are not part of this release. The only UofU information available is three dollar fields on the constituents table, and the snapshot fields section shows that all three are built from PBS giving, so they cannot serve as an outside measure of capacity.
+
+**Values that need interpretation**
+
+- A large share of Unite payments have the tender type "Legacy," which is not one of the values listed in the reference dictionary. Its share is flat across years and gift types, so it does not seem to record anything about the gift or the donor.
+- Monthly recurring gifts make up most payment rows, so a typical payment is only a few dollars. Annual totals per person are the right unit for the target, not single payments.
+
+**Time and leakage**
+
+- Legacy payments end in June 2020 and Unite payments start in July 2020, so the two systems do not overlap in time. Solicitation and Passport data only exist from FY2021 on, which limits how far back a full set of features can go.
+- Snapshot fields such as the sustainer flag, major donor class, annual giving group, and the UofU dollar fields are measured at the end of the data. The snapshot fields section shows that each can be rebuilt from FY2026 giving, so all are dropped. Age is also a snapshot, but it can be shifted back to the prediction date.
+- The `responded` flag in the solicitation table is defined by whether a payment was made, so it can only be used for fiscal years up to the prediction date.
+- Unite gift type labels such as Upgrade and Downgrade may be assigned using information from later in the same year. Because features are measured at the end of FY t, labels on FY t gifts are known by then, and only labels from the outcome years need to be excluded.
+- FY2026 shows a jump in revenue and donor counts after federal funding ended, which could distort recent history.
+- Passport rows only exist when a constituent viewed something, so a missing year can mean no linked account, no consent, or no viewing.
+
+**Outcome contamination**
+
+- About 1,000 donors per year were selected for the cultivation program from FY2022 to FY2025, and most of them were assigned to an officer for contact. If contact raises giving, some conversions in those years were partly caused by staff effort. The cultivation section confirms this: contact roughly doubles conversion. The program's capacity (8 portfolios of 125 donors) also gives a realistic sense of how long a working prospect list can be.
+
+## Data Setup
+
+The raw tables are large (the solicitation table alone is over 400 MB), so the first time this notebook runs it converts each CSV to a Parquet file in `data_cache/`. Later renders read the Parquet files, which is much faster. During the conversion every column is read as text first and then cast to the type it should have. This avoids polars guessing wrong on ID or ZIP columns. Column names are also converted to snake case so the tables can be joined and referenced the same way.
+
+```{python}
+#| label: setup
+
+import re
+from pathlib import Path
+
+import polars as pl
+from plotnine import *
+
+# folder locations relative to this notebook
+RAW = Path("tables")
+CACHE = Path("data_cache")
+CACHE.mkdir(exist_ok=True)
+
+# columns that need a type other than text, by table
+# "date" = ISO date, "num" = float, "int" = integer, "bool" = True/False text
+TYPES = {
+    "constituents_w_memberships": {
+        "Age": "num", "UofU Degree Count": "num", "Latest UofU Degree Year": "num",
+        "Lifetime UofU Fundraising": "num", "Previous FY UofU Cash": "num",
+        "Prospect Committed Giving Amount UofU": "num",
+        "Has UofU Legacy Gift": "bool", "Legacy Circle Member PBS Utah": "bool",
+        "Sustainer PBS Utah": "bool",
+    },
+    "unite_payments": {"credit_date": "date", "payment_amount": "num"},
+    "soft_credits": {"Credit Date": "date", "Credit Amount": "num"},
+    "team_approach_legacy_payments": {"gift_date": "date", "payment_amount": "num"},
+    "campaign_codes": {"Active": "bool", "Solicitation": "bool"},
+    "campaign_members": {
+        "responded": "bool", "indirect_response": "bool",
+        "responded_date": "date", "campaign_start_date": "date",
+    },
+    "passport_viewing": {"fiscal_year": "int", "titles_viewed": "int", "mean_percent_watched": "num"},
+    "cultivation": {
+        "fiscal_year": "int", "selected": "bool", "contacted": "bool",
+        "holdout": "bool", "program_adopted": "bool",
+    },
+    "officer_portfolios": {"capacity": "int", "rollout_fy": "num"},
+}
+
+def snake(name):
+    # "Constituent ID" -> "constituent_id"
+    return re.sub(r"[^0-9a-z]+", "_", name.lower()).strip("_")
+
+def cast_expr(col, kind):
+    c = pl.col(col)
+    if kind == "date":
+        return c.str.to_date("%Y-%m-%d", strict=False)
+    if kind == "num":
+        return c.cast(pl.Float64, strict=False)
+    if kind == "int":
+        return c.cast(pl.Float64, strict=False).cast(pl.Int64)
+    # booleans are stored as the text True / False; blanks stay null
+    return pl.when(c.is_null()).then(None).otherwise(c == "True").alias(col)
+
+def build_cache(table):
+    out = CACHE / f"{table}.parquet"
+    if not out.exists():
+        df = pl.read_csv(RAW / f"{table}.csv", infer_schema_length=0)  # all text
+        df = df.with_columns([cast_expr(c, k) for c, k in TYPES[table].items()])
+        df.rename({c: snake(c) for c in df.columns}).write_parquet(out)
+    return out
+
+# build any missing cache files, then load each table
+tables = {t: pl.read_parquet(build_cache(t)) for t in TYPES}
+con = tables["constituents_w_memberships"]
+pay = tables["unite_payments"]
+sc = tables["soft_credits"]
+ta = tables["team_approach_legacy_payments"]
+cc = tables["campaign_codes"]
+cm = tables["campaign_members"]
+pv = tables["passport_viewing"]
+cu = tables["cultivation"]
+op = tables["officer_portfolios"]
+
+def fiscal_year(col):
+    # PBS Utah fiscal years run July to June, so July 2020 is FY2021
+    return pl.col(col).dt.year() + (pl.col(col).dt.month() >= 7).cast(pl.Int32)
+
+# formatting helpers for inline numbers in the text
+def n(x):
+    return f"{x:,.0f}"
+
+def pct(x, d=1):
+    return f"{100 * x:.{d}f}%"
+
+def usd(x):
+    return f"${x:,.0f}"
+
+def pp(x, d=2):
+    # a difference between two rates, in percentage points
+    return f"{100 * x:.{d}f}"
+
+def show(df, pct_cols=(), pct_digits=1):
+    # render a polars frame as a clean html table
+    out = df.with_columns([
+        pl.col(c).map_elements(lambda v: f"{100 * v:.{pct_digits}f}%", return_dtype=pl.String) for c in pct_cols
+    ])
+    # keep year columns from getting thousands separators
+    year_cols = ("fy", "fiscal_year", "first_fy", "t", "cohort", "last_cohort")
+    out = out.with_columns([pl.col(c).cast(pl.String) for c in out.columns if c in year_cols])
+    return out.to_pandas().style.format(thousands=",", precision=2, na_rep="").hide(axis="index")
+
+theme_set(theme_minimal() + theme(figure_size=(8, 4)))
+```
+
+## Table Inventory and Linkage
+
+### Table Overview
+
+Before looking at any variables, I checked the size of each table and whether the key that identifies a row is actually unique. The key for each table comes from the student data dictionary. Campaign members has no documented key, so I tested the combination of constituent, marketing code, and fiscal year.
+
+```{python}
+#| label: inventory
+
+# table name, data, and the column(s) that should identify one row
+spec = [
+    ("constituents_w_memberships", con, ["constituent_id"]),
+    ("unite_payments", pay, ["payment_id"]),
+    ("soft_credits", sc, ["credit_id"]),
+    ("team_approach_legacy_payments", ta, ["ta_account_id"]),
+    ("campaign_codes", cc, ["marketing_code"]),
+    ("campaign_members", cm, ["constituent_id", "marketing_code", "campaign_start_date"]),
+    ("passport_viewing", pv, ["constituent_id", "fiscal_year", "genre"]),
+    ("cultivation", cu, ["synthetic_id", "fiscal_year"]),
+    ("officer_portfolios", op, ["portfolio_id"]),
+]
+
+inventory = pl.DataFrame([
+    {
+        "table": name,
+        "rows": d.height,
+        "columns": d.width,
+        "key": " + ".join(key),
+        "distinct_keys": d.select(key).n_unique(),
+        "exact_duplicate_rows": d.height - d.n_unique(),
+    }
+    for name, d, key in spec
+]).with_columns(key_is_unique=pl.col("rows") == pl.col("distinct_keys"))
+
+show(inventory)
+```
+
+```{python}
+#| label: key-checks
+
+# legacy account IDs end in a four digit year; compare it to the gift's fiscal year
+legacy_key = ta.select(
+    suffix=pl.col("ta_account_id").str.extract(r"-(\d{4})$").cast(pl.Int32),
+    fy=fiscal_year("gift_date"),
+    household=pl.col("ta_account_id").str.replace(r"-\d{4}$", ""),
+)
+suffix_match = (legacy_key["suffix"] == legacy_key["fy"]).mean()
+legacy_households = legacy_key["household"].n_unique()
+legacy_accounts = ta["ta_account_id"].n_unique()
+
+# soft credits: are the repeated credit IDs exact copies of another row?
+sc_dup_rows = sc.height - sc.n_unique()
+sc_distinct_ids = sc["credit_id"].n_unique()
+
+# campaign members: rows whose key repeats, and whether any of them responded
+cm_key = ["constituent_id", "marketing_code", "campaign_start_date"]
+cm_repeat = cm.filter(pl.struct(cm_key).is_duplicated())
+cm_repeat_rows = cm_repeat.height
+cm_repeat_responded = int(cm_repeat["responded"].sum())
+cm_dup_rows = inventory.filter(pl.col("table") == "campaign_members")["exact_duplicate_rows"][0]
+```
+
+Of the nine tables, `{python} n(inventory["key_is_unique"].sum())` have a unique key, including the composite keys for Passport viewing and cultivation. The remaining `{python} n((~inventory["key_is_unique"]).sum())` need explaining:
+
+- **Legacy payments.** `ta_account_id` is not a row key. There are `{python} n(legacy_accounts)` distinct values across `{python} n(ta.height)` rows. The four digit suffix on the ID equals the gift's fiscal year in `{python} pct(suffix_match)` of rows, so the ID identifies a household within one fiscal year, and each household-year can have many payments. Removing the suffix leaves `{python} n(legacy_households)` household accounts. The reference dictionary describes this field as a unique primary key, which does not hold in this release.
+- **Soft credits.** There are `{python} n(sc_dup_rows)` exact duplicate rows, and after removing them each credit ID appears once (`{python} n(sc_distinct_ids)` IDs). This matches the student dictionary. The data quality section shows that some of the remaining rows are also copies under a different ID.
+- **Campaign members.** `{python} n(cm_repeat_rows)` rows share their constituent, marketing code, and fiscal year with at least one other row, and `{python} "none" if cm_repeat_responded == 0 else n(cm_repeat_responded)` of them are responses. This is the pattern the student dictionary describes: a constituent can be solicited more than once under the same code in a year, and repeats only happen when there was no response. The `{python} n(cm_dup_rows)` exact duplicate rows are therefore probably repeat solicitations and not data entry errors, since the table records no contact date that could tell them apart. I keep them when counting solicitations.
+
+### Links Between Tables
+
+Next I checked whether each ID that points to another table finds a match there. A failed link means the row cannot be attached to a person, which matters for an individual-level model.
+
+```{python}
+#| label: links
+
+ids = con["constituent_id"].implode()
+
+def link(name, s, target):
+    # share of non-null IDs in s that appear in target
+    s = s.drop_nulls()
+    hit = s.is_in(target)
+    return {
+        "link": name,
+        "rows_with_id": s.len(),
+        "pct_rows_matched": hit.mean(),
+        "distinct_ids": s.n_unique(),
+        "distinct_unmatched": s.filter(~hit).n_unique(),
+    }
+
+links = pl.DataFrame([
+    link("unite_payments.donor_id to constituents", pay["donor_id"], ids),
+    link("soft_credits recipient to constituents", sc["soft_credit_constituent_id"], ids),
+    link("legacy constituent_id_1 to constituents", ta["constituent_id_1"], ids),
+    link("legacy constituent_id_2 to constituents", ta["constituent_id_2"], ids),
+    link("spouse_constituent_id to constituents", con["spouse_constituent_id"], ids),
+    link("campaign_members to constituents", cm["constituent_id"], ids),
+    link("campaign_members to campaign_codes", cm["marketing_code"], cc["marketing_code"].implode()),
+    link("unite_payments to campaign_codes", pay["marketing_code"], cc["marketing_code"].implode()),
+    link("passport_viewing to constituents", pv["constituent_id"], ids),
+    link("cultivation to constituents", cu["synthetic_id"], ids),
+    link("cultivation to officer_portfolios", cu["portfolio_id"], op["portfolio_id"].implode()),
+    link("soft_credits designation to unite_payments", sc["designation_detail_id"], pay["designation_detail_id"].implode()),
+])
+
+show(links, pct_cols=["pct_rows_matched"])
+```
+
+```{python}
+#| label: link-details
+
+# payments with the placeholder donor ID
+orphan_pay = pay.filter(pl.col("donor_id") == "SYN-ORPHAN")
+orphan_rows = orphan_pay.height
+orphan_amt = orphan_pay["payment_amount"].sum()
+orphan_share = orphan_amt / pay["payment_amount"].sum()
+orphan_fy = orphan_pay.group_by(fy=fiscal_year("credit_date")).agg(rows=pl.len())
+
+# payments made by the two organization records (hard credits behind soft credits)
+org_pay = (
+    pay.filter(pl.col("donor_id").str.starts_with("SYN-ORG"))
+    .group_by("donor_id")
+    .agg(payments=pl.len(), amount=pl.col("payment_amount").sum())
+    .sort("donor_id")
+)
+org_rows = org_pay["payments"].sum()
+org_amt = org_pay["amount"].sum()
+
+# payments whose marketing code is the placeholder
+code_orphan_rows = pay.filter(pl.col("marketing_code") == "SYN-ORPHAN").height
+
+# soft credit recipients with the placeholder ID
+sc_orphans = sc.filter(pl.col("soft_credit_constituent_id") == "SYN-ORPHAN").height
+
+# legacy rows with no linked constituent, as a share of rows and of dollars
+legacy_unlinked = ta["constituent_id_1"].null_count()
+legacy_unlinked_amt_share = (
+    ta.filter(pl.col("constituent_id_1").is_null())["payment_amount"].sum() / ta["payment_amount"].sum()
+)
+
+# spouse links should point both ways
+sp = con.filter(pl.col("spouse_constituent_id").is_not_null()).select("constituent_id", "spouse_constituent_id")
+back = sp.join(
+    sp.rename({"constituent_id": "spouse_constituent_id", "spouse_constituent_id": "back"}),
+    on="spouse_constituent_id", how="left",
+)
+spouse_people = sp.height
+spouse_reciprocal = (back["back"] == back["constituent_id"]).mean()
+
+# constituent ID prefixes separate donors, never-donors, and organizations
+id_types = (
+    con.select(prefix=pl.col("constituent_id").str.extract(r"^(SYN-ND|SYN-ORG|S)"))
+    .group_by("prefix").agg(constituents=pl.len()).sort("constituents", descending=True)
+)
+nd_count = id_types.filter(pl.col("prefix") == "SYN-ND")["constituents"][0]
+nd_in_pay = pay.filter(pl.col("donor_id").str.starts_with("SYN-ND")).height
+
+show(org_pay)
+```
+
+Almost every link resolves. The exceptions are listed below. At first these looked like gifts that simply could not be attached to a person, but the data quality section shows that nearly all of them are copies of other rows.
+
+- **Orphan payments.** `{python} n(orphan_rows)` Unite payments (`{python} usd(orphan_amt)`, or `{python} pct(orphan_share)` of Unite dollars) carry the donor ID `SYN-ORPHAN`, which is not in the constituents table. They are spread over all six fiscal years, between `{python} n(orphan_fy["rows"].min())` and `{python} n(orphan_fy["rows"].max())` rows per year. The student dictionary only mentions this placeholder for soft credits.
+- **Organization payments.** The two organization records (`SYN-ORG-DAF` and `SYN-ORG-SOFT`) made `{python} n(org_rows)` payments worth `{python} usd(org_amt)`. These are the hard credits behind the soft credits. Under the student dictionary's definition, a gift paid by an organization and soft credited to a person counts once, as that person's giving. So for individual totals I exclude organization payments and add the soft credits, and for revenue totals I do the reverse. The giving panel section checks that the two sides roughly agree.
+- **Soft credit orphans.** `{python} n(sc_orphans)` soft credits go to `SYN-ORPHAN` and cannot be assigned to anyone.
+- **Unlinked legacy gifts.** `{python} n(legacy_unlinked)` legacy rows (`{python} pct(legacy_unlinked / ta.height)` of rows and `{python} pct(legacy_unlinked_amt_share)` of legacy dollars) have no constituent ID. The share is close to 18% in every fiscal year from FY1999 on.
+- **Marketing code placeholder.** `{python} n(code_orphan_rows)` payments use `SYN-ORPHAN` as the marketing code, so they cannot be linked to a campaign.
+- **Spouses.** `{python} n(spouse_people)` constituents list a spouse, every spouse ID exists in the table, and `{python} pct(spouse_reciprocal)` of the links point both ways. That makes it straightforward to keep spouses together when splitting data for validation.
+- **Never-donors.** `{python} n(nd_count)` constituents have IDs starting with `SYN-ND`, and `{python} "none" if nd_in_pay == 0 else n(nd_in_pay)` of the Unite payments belong to them. These records have no giving at all and fall outside the eligible population.
+
+### Coverage by Fiscal Year
+
+The tables cover very different spans of time. The plot below counts distinct linked constituents per fiscal year in each table. For legacy payments only linked rows count, and placeholder and organization IDs are excluded.
+
+```{python}
+#| label: coverage
+#| fig-height: 4
+
+def per_fy(df, fy_expr, id_col, name):
+    return (
+        df.filter(pl.col(id_col).is_not_null() & ~pl.col(id_col).str.starts_with("SYN-"))
+        .group_by(fy=fy_expr)
+        .agg(rows=pl.len(), people=pl.col(id_col).n_unique())
+        .with_columns(table=pl.lit(name), fy=pl.col("fy").cast(pl.Int32))
+    )
+
+coverage = pl.concat([
+    per_fy(ta, fiscal_year("gift_date"), "constituent_id_1", "Legacy payments"),
+    per_fy(pay, fiscal_year("credit_date"), "donor_id", "Unite payments"),
+    per_fy(sc, fiscal_year("credit_date"), "soft_credit_constituent_id", "Soft credits"),
+    per_fy(cm, fiscal_year("campaign_start_date"), "constituent_id", "Campaign members"),
+    per_fy(pv, pl.col("fiscal_year"), "constituent_id", "Passport viewing"),
+    per_fy(cu, pl.col("fiscal_year"), "synthetic_id", "Cultivation"),
+])
+
+span = (
+    coverage.group_by("table")
+    .agg(first_fy=pl.col("fy").min(), last_fy=pl.col("fy").max(), fiscal_years=pl.len())
+    .sort("first_fy")
+)
+
+# legacy volume is tiny before FY1999, so note where it becomes substantial
+legacy_fy = coverage.filter(pl.col("table") == "Legacy payments").sort("fy")
+legacy_pre99_max = legacy_fy.filter(pl.col("fy") < 1999)["rows"].max()
+legacy_99 = legacy_fy.filter(pl.col("fy") == 1999)
+legacy_20 = legacy_fy.filter(pl.col("fy") == 2020)
+unite_21 = coverage.filter((pl.col("table") == "Unite payments") & (pl.col("fy") == 2021))
+unite_26 = coverage.filter((pl.col("table") == "Unite payments") & (pl.col("fy") == 2026))
+unite_25 = coverage.filter((pl.col("table") == "Unite payments") & (pl.col("fy") == 2025))
+
+(
+    ggplot(coverage.filter(pl.col("fy") >= 1996).to_pandas(), aes("fy", "people", color="table"))
+    + geom_line()
+    + geom_point(size=1)
+    + geom_vline(xintercept=2020.5, linetype="dashed", color="grey")
+    + scale_y_continuous(labels=lambda b: [f"{v / 1000:,.0f}k" for v in b])
+    + labs(x="Fiscal year", y="Distinct constituents", color="",
+           title="Constituents with records in each table by fiscal year",
+           subtitle="Dashed line marks the switch from legacy to Unite (FY2020 to FY2021)")
+)
+```
+
+```{python}
+#| label: coverage-span
+show(span)
+```
+
+The coverage plot sets up the main time constraint for the project:
+
+- **Giving history is long.** Legacy payments start in FY1984, but before FY1999 no year has more than `{python} n(legacy_pre99_max)` linked rows. In FY1999 the count jumps to `{python} n(legacy_99["people"][0])` linked donors, which looks like the point where the legacy system's records become complete. In practice the usable giving history runs from FY1999 to FY2026, about 28 years.
+- **Everything else is short.** Solicitations, soft credits, and Passport viewing start in FY2021, and cultivation covers FY2022 to FY2025 only. Any feature built from those tables exists for six years at most.
+- **The system switch looks continuous.** Linked legacy donors reach `{python} n(legacy_20["people"][0])` in FY2020 and Unite has `{python} n(unite_21["people"][0])` donors in FY2021. The legacy count excludes the roughly 18% of rows that are unlinked, so the two figures are not directly comparable. The giving panel section checks continuity at the individual level.
+- **FY2026 stands out.** Unite donors rise from `{python} n(unite_25["people"][0])` in FY2025 to `{python} n(unite_26["people"][0])` in FY2026, the largest one-year change in the Unite period.
+
+For modeling, this means a 3 to 5 year outcome window can be backtested many times using giving history alone, but far fewer times if the model also uses solicitation and Passport features. With those features, the earliest prediction date is the end of FY2021, and FY2026 is the last year of outcomes. That leaves three cohorts for a 3 year window (prediction dates at the end of FY2021, FY2022, and FY2023) and only one for a 5 year window, and the earliest cohort would have only one year of solicitation and viewing history behind it. The section on major donors and conversion works out the exact cohorts and their sizes.
+
+## Data Quality
+
+### Duplicate Records
+
+While checking the orphan payments from the linkage section, I found that each one shares its opportunity ID, date, and amount with a payment from a known donor. That led to a closer look at the row IDs. Most Unite payments have IDs starting with `SYN-PAY`, but some have IDs like `SYN-DEF-unmatched_constituent` or `SYN-DEF-nonpositive_amount`, which describe what is wrong with the row. The legacy table has a similar group of rows whose account IDs start with `SYN-UNMATCHED`.
+
+For each group, the check below looks for a "twin": a valid row that matches the defect row on every column except the row ID and the one field that is broken (the donor ID, the campaign code, or the amount).
+
+```{python}
+#| label: defects
+
+# label each Unite payment and soft credit as real or by its defect type, taken from the row ID
+pay_kind = pay.with_columns(
+    kind=pl.col("payment_id").str.extract(r"^SYN-DEF-([a-z_]+)").fill_null("real")
+)
+sc_kind = sc.with_columns(
+    kind=pl.col("credit_id").str.extract(r"^SYN-DEF-([a-z_]+)").fill_null("real")
+)
+
+# the field each defect type breaks, so twins are matched on everything else
+broken_field = {
+    "unite_payments": {
+        "unmatched_constituent": "donor_id",
+        "unmatched_campaign": "marketing_code",
+        "nonpositive_amount": "payment_amount",
+    },
+    "soft_credits": {
+        "unmatched_constituent": "soft_credit_constituent_id",
+        "nonpositive_amount": "credit_amount",
+    },
+}
+
+def twin_summary(df, table, id_col, amt_col):
+    real = df.filter(pl.col("kind") == "real")
+    out = []
+    for kind, field in broken_field[table].items():
+        bad = df.filter(pl.col("kind") == kind)
+        match_on = [c for c in df.columns if c not in (id_col, field, "kind")]
+        out.append({
+            "table": table,
+            "defect": kind,
+            "rows": bad.height,
+            "amount": bad[amt_col].sum(),
+            "rows_with_real_twin": bad.join(real, on=match_on, how="semi").height,
+        })
+    return out
+
+# legacy rows with no constituent: twins are linked rows that match on every non-ID column
+legacy_linked = ta.filter(pl.col("constituent_id_1").is_not_null())
+legacy_unmatched = ta.filter(pl.col("constituent_id_1").is_null())
+legacy_match_on = [c for c in ta.columns if c != "ta_account_id" and not c.startswith("constituent_id")]
+
+# soft credits also contain exact duplicate rows among the real credits
+sc_real = sc_kind.filter(pl.col("kind") == "real")
+sc_dup_extra = sc_real.height - sc_real.n_unique()
+
+defects = pl.DataFrame(
+    twin_summary(pay_kind, "unite_payments", "payment_id", "payment_amount")
+    + twin_summary(sc_kind, "soft_credits", "credit_id", "credit_amount")
+    + [
+        {
+            "table": "soft_credits",
+            "defect": "exact_duplicate_row",
+            "rows": sc_dup_extra,
+            "amount": sc_real["credit_amount"].sum() - sc_real.unique()["credit_amount"].sum(),
+            "rows_with_real_twin": sc_dup_extra,
+        },
+        {
+            "table": "team_approach_legacy_payments",
+            "defect": "unmatched (SYN-UNMATCHED)",
+            "rows": legacy_unmatched.height,
+            "amount": legacy_unmatched["payment_amount"].sum(),
+            "rows_with_real_twin": legacy_unmatched.join(
+                legacy_linked, on=legacy_match_on, how="semi", nulls_equal=True
+            ).height,
+        },
+    ]
+).with_columns(pct_with_twin=pl.col("rows_with_real_twin") / pl.col("rows"))
+
+# confirm the real rows are clean on the fields the defects break
+real_pay = pay_kind.filter(pl.col("kind") == "real")
+real_zero = (real_pay["payment_amount"] <= 0).sum()
+real_orphan = real_pay.filter(
+    (pl.col("donor_id") == "SYN-ORPHAN") | (pl.col("marketing_code") == "SYN-ORPHAN")
+).height
+pay_defect_rows = pay.height - real_pay.height
+pay_defect_amt = pay["payment_amount"].sum() - real_pay["payment_amount"].sum()
+
+# the linked legacy source_code is unique per row, which makes the twin match one to one
+legacy_src_distinct = legacy_linked["source_code"].n_unique()
+
+show(defects, pct_cols=["pct_with_twin"])
+```
+
+Every defect row has a twin among the valid rows. The `{python} n(pay_defect_rows)` defect rows in the Unite table add `{python} usd(pay_defect_amt)` that would otherwise be counted twice. Among the valid `SYN-PAY` rows, `{python} "none" if real_zero == 0 else n(real_zero)` of the payments are $0 or less and `{python} "none" if real_orphan == 0 else n(real_orphan)` have a placeholder donor or campaign code. So the $0 payments, the orphan donor IDs, and the orphan campaign codes are not separate problems. They are all copies of valid payments with one field broken, and removing them loses no information.
+
+The legacy `SYN-UNMATCHED` rows are the largest group, and they need more explanation because the documentation describes them as real gifts.
+
+### The Unmatched Legacy Rows
+
+The README says: "Some legacy rows link to no constituent, as in the real data." The student dictionary lists this as one of two exceptions to the rule that every link resolves. These are gifts PBS Utah received but could never match to a person in Unite, for example because an old donor record was never migrated. They belong in organization revenue but cannot be part of any individual's history.
+
+Before deciding how to count them, I checked how the unmatched rows relate to the linked ones.
+
+```{python}
+#| label: unmatched-evidence
+
+# the number at the end of each SYN-UNMATCHED account ID versus the number in its own source code
+id_num = lambda c: pl.col(c).str.extract(r"(\d+)$").cast(pl.Int64)
+id_from_source = legacy_unmatched.select((id_num("ta_account_id") == id_num("source_code")).mean()).item()
+
+# every unmatched source code belongs to exactly one linked row
+unmatched_src_distinct = legacy_unmatched["source_code"].n_unique()
+copy_rate = unmatched_src_distinct / legacy_linked.height
+
+# if the copies are a random sample, the copy rate should be flat across amounts, years, and spouse rows
+linked_flag = legacy_linked.with_columns(
+    copied=pl.col("source_code").is_in(legacy_unmatched["source_code"].implode()),
+    fy=fiscal_year("gift_date"),
+)
+
+def copy_rate_by(label, expr):
+    return (
+        linked_flag.group_by(level=expr)
+        .agg(linked_gifts=pl.len(), pct_copied=pl.col("copied").mean())
+        .with_columns(grouping=pl.lit(label), level=pl.col("level").cast(pl.String))
+        .select("grouping", "level", "linked_gifts", "pct_copied")
+        .sort("level")
+    )
+
+copy_check = pl.concat([
+    copy_rate_by("gift amount", pl.col("payment_amount").cut([10, 100, 1000], labels=["$10 or less", "$10 to $100", "$100 to $1,000", "over $1,000"])),
+    copy_rate_by("gift kind", pl.col("gift_kind")),
+    copy_rate_by("lists a spouse", pl.col("constituent_id_2").is_not_null()),
+    copy_rate_by("fiscal year 2015 to 2020", pl.when(pl.col("fy") >= 2015).then(pl.col("fy"))),
+]).filter(pl.col("level").is_not_null())
+copy_lo = copy_check["pct_copied"].min()
+copy_hi = copy_check["pct_copied"].max()
+
+linked_total = legacy_linked["payment_amount"].sum()
+unmatched_total = legacy_unmatched["payment_amount"].sum()
+
+show(copy_check, pct_cols=["pct_copied"])
+```
+
+The unmatched rows do not look like separate gifts:
+
+1. **Each one repeats a linked gift.** Every unmatched row matches a linked row on all columns except the IDs, and the number at the end of each `SYN-UNMATCHED` account ID equals the number in that linked gift's `source_code` in `{python} pct(id_from_source)` of rows. Because `source_code` is unique among linked rows (`{python} n(legacy_src_distinct)` distinct codes for `{python} n(legacy_linked.height)` rows), each unmatched row lines up with exactly one linked gift.
+2. **No linked gift is repeated more than once.** The `{python} n(legacy_unmatched.height)` unmatched rows point to `{python} n(unmatched_src_distinct)` different linked gifts, or `{python} pct(copy_rate)` of all linked gifts.
+3. **They are spread evenly.** The share of linked gifts with an unmatched twin stays between `{python} pct(copy_lo)` and `{python} pct(copy_hi)` across gift sizes, gift kinds, spouse rows, and recent fiscal years. Gifts that fail to match would usually be concentrated among older or incomplete records, not spread evenly.
+
+This is listed in the data concerns at the top of the notebook. For the analysis, it changes little:
+
+- **Individual histories.** Unmatched gifts cannot be attached to anyone, so they are left out of individual giving.
+- **Revenue before FY2021.** Linked legacy gifts total `{python} usd(linked_total)`. Following the README, the organization total including unmatched gifts is `{python} usd(linked_total + unmatched_total)`, which is `{python} pct(unmatched_total / linked_total)` higher. Because the unmatched amounts repeat linked gifts, I report revenue for these years both ways. Revenue from FY2021 on is not affected.
+- **Incomplete histories.** If `{python} pct(legacy_unmatched.height / ta.height)` of legacy gifts cannot be matched, some donors' pre-FY2021 histories are incomplete. Their tenure and lifetime giving would be understated, and some long-time donors would look new when Unite begins. This cannot be measured here because the unmatched gifts do not point to anyone, so legacy-based features should be treated as lower bounds.
+
+```{python}
+#| label: clean-tables
+
+# cleaned versions used in the rest of the notebook
+pay_clean = real_pay.drop("kind")
+sc_clean = sc_real.drop("kind").unique()
+ta_clean = legacy_linked          # individual histories use linked gifts only
+ta_unmatched = legacy_unmatched   # kept aside for organization revenue before FY2021
+```
+
+The cleaned tables keep `{python} n(pay_clean.height)` Unite payments, `{python} n(sc_clean.height)` soft credits, and `{python} n(ta_clean.height)` linked legacy payments, with the `{python} n(ta_unmatched.height)` unmatched legacy gifts kept aside for revenue totals.
+
+### Column Profile
+
+Next I profiled every column in every table: the share missing or blank, the number of distinct values, and how common the most frequent value is. A column that is completely blank or holds a single value cannot help a model. The full profile is in the collapsed note below, and the columns that matter are summarized after it.
+
+```{python}
+#| label: profile
+# share missing, number of distinct values, and most common value for every column in every table
+
+def profile(name, d):
+    out = []
+    for c in d.columns:
+        s = d[c]
+        blank = s.is_null() | (s.cast(pl.String) == "")
+        vals = s.filter(~blank).cast(pl.String)
+        top = vals.value_counts(sort=True).head(1)
+        out.append({
+            "table": name,
+            "column": c,
+            "pct_missing": blank.mean(),
+            "distinct": vals.n_unique(),
+            "top_value": top[0, 0] if top.height else None,
+            "top_share": top[0, 1] / vals.len() if top.height else None,
+        })
+    return out
+
+col_profile = pl.DataFrame([row for name, d in tables.items() for row in profile(name, d)]).with_columns(
+    status=pl.when(pl.col("pct_missing") == 1).then(pl.lit("blank"))
+    .when(pl.col("distinct") == 1).then(pl.lit("single value"))
+    .otherwise(pl.lit("varies"))
+)
+status_counts = col_profile.group_by("status").len()
+n_cols = col_profile.height
+n_blank = status_counts.filter(pl.col("status") == "blank")["len"][0]
+n_single = status_counts.filter(pl.col("status") == "single value")["len"][0]
+```
+
+::: {.callout-note collapse="true"}
+## Full column profile
+
+```{python}
+#| label: profile-table
+show(col_profile, pct_cols=["pct_missing", "top_share"])
+```
+:::
+
+Of the `{python} n(n_cols)` columns across the nine tables, `{python} n(n_blank)` are completely blank and `{python} n(n_single)` hold only one value. Most of these are fields that were masked in this extract, such as the campaign code parts, the legacy payment method and communication fields, and the city, which holds the same placeholder name for everyone who has one.
+
+### Redundant Columns
+
+Some columns that do vary only repeat information found in another column.
+
+```{python}
+#| label: redundant
+
+redundant = pl.DataFrame([
+    {"table": "constituents_w_memberships", "column": "constituent_type",
+     "same_as": "primary_constituent_type",
+     "pct_rows_agree": (con["constituent_type"] == con["primary_constituent_type"]).mean()},
+    {"table": "constituents_w_memberships", "column": "marital_status",
+     "same_as": "has a spouse_constituent_id",
+     "pct_rows_agree": ((con["marital_status"] == "Married") == con["spouse_constituent_id"].is_not_null()).mean()},
+    {"table": "unite_payments", "column": "payment_frequency",
+     "same_as": "pledge_gift_type (Monthly = Recurring)",
+     "pct_rows_agree": ((pay["payment_frequency"] == "Monthly") == (pay["pledge_gift_type"] == "Recurring")).mean()},
+    {"table": "team_approach_legacy_payments", "column": "pledge_time",
+     "same_as": "gift_date",
+     "pct_rows_agree": (ta["pledge_time"] == ta["gift_date"].cast(pl.String)).mean()},
+    {"table": "campaign_codes", "column": "campaign_id",
+     "same_as": "marketing_code",
+     "pct_rows_agree": (cc["campaign_id"] == cc["marketing_code"]).mean()},
+])
+
+# opportunity IDs: one per real payment, so they cannot group a recurring schedule
+n_opps = pay_clean["opportunity_id"].n_unique()
+
+show(redundant, pct_cols=["pct_rows_agree"])
+```
+
+All five pairs agree on every row. Two of these change how the data can be used. The reference dictionary describes `constituent_type` as a list of every type a constituent holds, but here it is identical to the primary type, so there is no information about secondary affiliations. `marital_status` only ever says "Married," and only when a spouse ID exists, so a blank does not mean single and the field adds nothing beyond the spouse link.
+
+The opportunity ID also turned out to be less useful than expected. The cleaned payments have `{python} n(n_opps)` distinct opportunity IDs for `{python} n(pay_clean.height)` payments, so every opportunity has exactly one payment and the ID cannot group the monthly payments of one recurring schedule. Recurring behavior will have to be built from the donor, date, and amount instead.
+
+### The "Legacy" Tender Type
+
+`{python} pct((pay_clean["tender_type"] == "Legacy").mean())` of cleaned Unite payments have the tender type "Legacy," which is not one of the values listed in the reference dictionary. My first guess was that it marks recurring schedules moved over from the old Team Approach system. If that were true, its share should shrink over time as old schedules end, and it should be higher for recurring gifts and for donors with legacy history.
+
+```{python}
+#| label: tender-legacy
+# share of payments with the 'Legacy' tender type, split three ways to look for any pattern
+
+legacy_donors = ta_clean.select(donor_id=pl.col("constituent_id_1")).unique()
+tender = pay_clean.with_columns(
+    fy=fiscal_year("credit_date"),
+    is_legacy_tender=pl.col("tender_type") == "Legacy",
+    has_ta_history=pl.col("donor_id").is_in(legacy_donors["donor_id"].implode()),
+)
+
+def legacy_share(by):
+    return (
+        tender.group_by(by)
+        .agg(payments=pl.len(), pct_legacy_tender=pl.col("is_legacy_tender").mean())
+        .with_columns(grouping=pl.lit(by), level=pl.col(by).cast(pl.String))
+        .select("grouping", "level", "payments", "pct_legacy_tender")
+        .sort("level")
+    )
+
+tender_check = pl.concat([legacy_share("fy"), legacy_share("pledge_gift_type"), legacy_share("has_ta_history")])
+tender_lo = tender_check["pct_legacy_tender"].min()
+tender_hi = tender_check["pct_legacy_tender"].max()
+
+show(tender_check, pct_cols=["pct_legacy_tender"])
+```
+
+None of those patterns appear. The share stays between `{python} pct(tender_lo)` and `{python} pct(tender_hi)` across fiscal years, gift types, and donors with or without legacy history. Without knowing what the value means, I do not plan to use tender type as a feature. It is listed in the data concerns at the top so its meaning can be confirmed.
+
+### Columns to Drop
+
+Putting the profile and the redundancy checks together gives the list of columns I will not carry into the cleaned dataset. Columns needed only for joining or cleaning, such as `payment_id` and `source_code`, are kept until the panel is built.
+
+```{python}
+#| label: drop-list
+
+# single value columns that still carry meaning are kept on purpose
+keep_anyway = {("officer_portfolios", "capacity"), ("cultivation", "selected")}
+
+drop_list = pl.concat([
+    col_profile.filter(pl.col("status") != "varies")
+    .filter(~pl.concat_str("table", pl.lit("|"), "column").is_in([f"{t}|{c}" for t, c in keep_anyway]))
+    .select("table", "column", reason=pl.col("status")),
+    redundant.select("table", "column", reason=pl.lit("same as ") + pl.col("same_as")),
+    pl.DataFrame({"table": ["unite_payments"], "column": ["tender_type"],
+                  "reason": ["'Legacy' value is undocumented and shows no pattern"]}),
+]).unique(subset=["table", "column"], keep="first", maintain_order=True).sort("table", "column")
+
+drop_by_table = drop_list.group_by("table").agg(columns_dropped=pl.len()).sort("columns_dropped", descending=True)
+
+show(drop_by_table)
+```
+
+::: {.callout-note collapse="true"}
+## Full drop list
+
+```{python}
+#| label: drop-list-table
+show(drop_list)
+```
+:::
+
+In total `{python} n(drop_list.height)` columns are dropped. Two single-value columns are kept on purpose: officer portfolio capacity, because it sets a realistic list size, and the cultivation `selected` flag, because it documents how the program was designed. The legacy table loses the most columns, which leaves it with little more than the gift date, amount, gift kind (one-time or sustaining), gift type, state, a ZIP code masked to three digits, and the linked constituent IDs. That is still enough to build giving history, which is the main thing the legacy data is needed for.
+
+### Summary of Cleaning Rules
+
+These rules are applied before building the giving panel:
+
+1. Remove all `SYN-DEF` rows from Unite payments and soft credits, since each is a copy of a valid row with one field broken.
+2. Remove exact duplicate soft credit rows.
+3. Leave legacy rows with no linked constituent out of individual histories, and report revenue before FY2021 both with and without them.
+4. Exclude the two organization records from individual giving and use the soft credits instead.
+5. Credit legacy gifts that list two spouses to the first listed constituent only, with a flag, and repeat key results with those rows dropped as a sensitivity check.
+6. Drop the columns in the drop list.
+7. Treat the never-donor (`SYN-ND`) records as outside the donor population, while keeping them available for solicitation and Passport comparisons.
+
+## Building the Giving Panel
+
+### Panel Construction
+
+The target is defined on a person's total giving in a fiscal year, so the main analysis table is a panel with one row per constituent per fiscal year in which they gave. Following the student dictionary, a person's fiscal-year giving is the sum of their own positive payments plus the positive soft credits assigned to them. Payments made by the two organization records are left out of individual totals, because the soft credits already assign those gifts to people. Legacy gifts that list two spouses are credited to the first listed constituent (option A). A second version of the panel drops those shared gifts instead (option D) and is used only as a sensitivity check.
+
+```{python}
+#| label: panel
+
+ORG_IDS = ["SYN-ORG-DAF", "SYN-ORG-SOFT"]
+
+# Unite payments made by individuals, summed by person and fiscal year
+unite_py = (
+    pay_clean.filter(~pl.col("donor_id").is_in(ORG_IDS))
+    .group_by(constituent_id=pl.col("donor_id"), fy=fiscal_year("credit_date"))
+    .agg(
+        unite_amt=pl.col("payment_amount").sum(),
+        unite_payments=pl.len(),
+        recurring_amt=pl.col("payment_amount").filter(pl.col("pledge_gift_type") == "Recurring").sum(),
+        outright_amt=pl.col("payment_amount").filter(pl.col("pledge_gift_type") == "Outright").sum(),
+    )
+)
+
+# soft credits, which stand in for gifts paid by organizations on a person's behalf
+soft_py = (
+    sc_clean.group_by(constituent_id=pl.col("soft_credit_constituent_id"), fy=fiscal_year("credit_date"))
+    .agg(soft_amt=pl.col("credit_amount").sum(), soft_credits=pl.len())
+)
+
+def legacy_py(rows):
+    # legacy gifts credited to the first listed constituent, with spouse-shared dollars tracked
+    return (
+        rows.group_by(constituent_id=pl.col("constituent_id_1"), fy=fiscal_year("gift_date"))
+        .agg(
+            legacy_amt=pl.col("payment_amount").sum(),
+            legacy_gifts=pl.len(),
+            shared_legacy_amt=pl.col("payment_amount").filter(pl.col("constituent_id_2").is_not_null()).sum(),
+        )
+    )
+
+def build_panel(legacy_rows):
+    return (
+        pl.concat([unite_py, soft_py, legacy_py(legacy_rows)], how="diagonal")
+        .group_by("constituent_id", "fy")
+        .agg(pl.all().sum())  # missing sources sum to zero
+        .with_columns(total=pl.sum_horizontal("unite_amt", "soft_amt", "legacy_amt"))
+        .sort("constituent_id", "fy")
+    )
+
+panel = build_panel(ta_clean)                                                # option A
+panel_d = build_panel(ta_clean.filter(pl.col("constituent_id_2").is_null()))  # option D
+
+TIERS = [1200, 2000, 5000, 10000, 15000]
+TIER_LABELS = ["under $1,200", "$1,200", "$2,000", "$5,000", "$10,000", "$15,000+"]
+
+def tier(col="total"):
+    # tier reached in a fiscal year, using the problem statement's tier floors
+    return pl.col(col).cut(TIERS, labels=TIER_LABELS, left_closed=True).cast(pl.Enum(TIER_LABELS))
+
+panel = panel.with_columns(tier=tier(), major=pl.col("total") >= 1200)
+panel_d = panel_d.with_columns(tier=tier(), major=pl.col("total") >= 1200)
+
+panel_people = panel["constituent_id"].n_unique()
+panel_nonpositive = panel.filter(pl.col("total") <= 0).height
+
+show(panel.filter(pl.col("major") & (pl.col("fy") == 2026)).head(5))
+```
+
+The panel has `{python} n(panel.height)` person-years for `{python} n(panel_people)` people, from FY`{python} panel["fy"].min()` to FY`{python} panel["fy"].max()`. `{python} "No" if panel_nonpositive == 0 else n(panel_nonpositive)` person-years have a total of zero or less. The table above shows a few FY2026 major donor-years to illustrate the columns.
+
+### Organization Payments and Soft Credits
+
+Excluding organization payments from individual giving only works if the soft credits cover the same gifts. The check below compares the two by fiscal year and by individual gift.
+
+```{python}
+#| label: soft-vs-org
+
+org_fy = (
+    pay_clean.filter(pl.col("donor_id").is_in(ORG_IDS))
+    .group_by(fy=fiscal_year("credit_date"))
+    .agg(org_payments=pl.len(), org_paid=pl.col("payment_amount").sum())
+)
+soft_fy = sc_clean.group_by(fy=fiscal_year("credit_date")).agg(soft_credits=pl.len(), soft_credited=pl.col("credit_amount").sum())
+soft_vs_org = org_fy.join(soft_fy, on="fy", how="full", coalesce=True).sort("fy")
+
+# gift-level match on date, amount, and designation
+org_gifts = (
+    pay_clean.filter(pl.col("donor_id").is_in(ORG_IDS))
+    .select("credit_date", "designation_detail_id", credit_amount=pl.col("payment_amount"))
+    .unique()
+)
+soft_matched = sc_clean.join(org_gifts, on=["credit_date", "credit_amount", "designation_detail_id"], how="semi").height
+
+# with organizations swapped for soft credits, individual totals should equal Unite revenue
+unite_revenue = pay_clean.group_by(fy=fiscal_year("credit_date")).agg(revenue=pl.col("payment_amount").sum())
+individual_revenue = panel.filter(pl.col("fy") >= 2021).group_by("fy").agg(individual=pl.col("total").sum())
+revenue_gap = unite_revenue.join(individual_revenue, on="fy").select((pl.col("revenue") - pl.col("individual")).abs().max()).item()
+
+show(soft_vs_org)
+```
+
+The two sides agree exactly in every fiscal year, and `{python} n(soft_matched)` of the `{python} n(sc_clean.height)` soft credits match an organization payment on date, amount, and designation. With organization payments swapped for soft credits, the sum of individual giving equals total Unite revenue in every year (largest gap `{python} usd(revenue_gap)`). So individual totals neither lose nor double count any dollars from FY2021 on.
+
+### Continuity Across the System Switch
+
+Legacy and Unite are separate systems, so I checked whether individual donors carry over from one to the other. If the switch had broken links between people, donor retention from FY2020 to FY2021 would drop compared with the years around it.
+
+```{python}
+#| label: continuity
+#| fig-height: 3.5
+
+donor_years = panel.select("constituent_id", "fy").unique()
+
+def retention(fy):
+    # share of donors in fy who give again in fy + 1
+    this_year = donor_years.filter(pl.col("fy") == fy)
+    next_year = donor_years.filter(pl.col("fy") == fy + 1)
+    return this_year.join(next_year, on="constituent_id", how="semi").height / this_year.height
+
+retention_df = pl.DataFrame({"fy": list(range(2000, 2026))}).with_columns(
+    retention=pl.col("fy").map_elements(retention, return_dtype=pl.Float64)
+)
+ret_19 = retention_df.filter(pl.col("fy") == 2019)["retention"][0]
+ret_20 = retention_df.filter(pl.col("fy") == 2020)["retention"][0]
+ret_21 = retention_df.filter(pl.col("fy") == 2021)["retention"][0]
+
+# first fiscal year each person appears, and new donors per year
+first_fy = donor_years.group_by("constituent_id").agg(first_fy=pl.col("fy").min())
+fy21_with_history = (
+    donor_years.filter(pl.col("fy") == 2021).join(first_fy, on="constituent_id")
+    .select((pl.col("first_fy") < 2021).mean()).item()
+)
+new_donors = first_fy.group_by(fy=pl.col("first_fy")).agg(new_donors=pl.len()).sort("fy")
+new_20 = new_donors.filter(pl.col("fy") == 2020)["new_donors"][0]
+new_21 = new_donors.filter(pl.col("fy") == 2021)["new_donors"][0]
+new_25 = new_donors.filter(pl.col("fy") == 2025)["new_donors"][0]
+new_26 = new_donors.filter(pl.col("fy") == 2026)["new_donors"][0]
+
+(
+    ggplot(retention_df.to_pandas(), aes("fy", "retention"))
+    + geom_line()
+    + geom_point(size=1.5)
+    + geom_vline(xintercept=2020, linetype="dashed", color="grey")
+    + scale_y_continuous(labels=lambda b: [f"{v:.0%}" for v in b])
+    + labs(x="Fiscal year (retention into the following year)", y="Donors who give again",
+           title="Year over year donor retention",
+           subtitle="Dashed line marks FY2020 to FY2021, the switch from legacy to Unite")
+)
+```
+
+Retention moves smoothly across the switch: `{python} pct(ret_19)` from FY2019 to FY2020, `{python} pct(ret_20)` from FY2020 to FY2021, and `{python} pct(ret_21)` from FY2021 to FY2022. `{python} pct(fy21_with_history)` of FY2021 donors have legacy giving history, and the number of first-time donors in FY2021 (`{python} n(new_21)`) is close to FY2020 (`{python} n(new_20)`). At the individual level the two systems link up cleanly, so legacy history can be used for features. Retention has also risen over time, from `{python} pct(retention_df.filter(pl.col("fy") == 2015)["retention"][0])` for FY2015 donors to `{python} pct(retention_df.filter(pl.col("fy") == 2025)["retention"][0])` for FY2025 donors, so lapsing is less common in recent years than in the legacy period. The one jump in new donors is in FY2026 (`{python} n(new_26)`, compared with `{python} n(new_25)` in FY2025), which matches the influx after federal funding ended.
+
+### How Concentrated Is Major Giving?
+
+The problem statement says major donors are about 1% of donors and give about 19% of donor revenue. The table below checks that claim in each fiscal year. Donors are people with positive giving that year, and major donors are those with a total of $1,200 or more. For legacy years, the last column shows the major share again with unmatched legacy gifts added to the revenue total.
+
+```{python}
+#| label: concentration
+# donors, major donors, and revenue by fiscal year; legacy years also shown with unmatched gifts in revenue
+
+unmatched_fy = ta_unmatched.group_by(fy=fiscal_year("gift_date")).agg(unmatched_rev=pl.col("payment_amount").sum())
+
+concentration = (
+    panel.filter(pl.col("fy") >= 1999)
+    .group_by("fy")
+    .agg(
+        donors=pl.len(),
+        major_donors=pl.col("major").sum(),
+        revenue=pl.col("total").sum(),
+        major_revenue=pl.col("total").filter(pl.col("major")).sum(),
+    )
+    .join(unmatched_fy, on="fy", how="left")
+    .with_columns(
+        pct_donors_major=pl.col("major_donors") / pl.col("donors"),
+        pct_revenue_major=pl.col("major_revenue") / pl.col("revenue"),
+        pct_revenue_major_with_unmatched=pl.when(pl.col("unmatched_rev").is_not_null()).then(
+            pl.col("major_revenue") / (pl.col("revenue") + pl.col("unmatched_rev"))
+        ),
+    )
+    .drop("unmatched_rev")
+    .sort("fy")
+)
+
+recent = concentration.filter(pl.col("fy") >= 2021)
+pooled_recent = recent.select(
+    donors=pl.col("major_donors").sum() / pl.col("donors").sum(),
+    revenue=pl.col("major_revenue").sum() / pl.col("revenue").sum(),
+).row(0, named=True)
+legacy_era = concentration.filter(pl.col("fy").is_between(2011, 2020))
+
+show(concentration.filter(pl.col("fy") >= 2011),
+     pct_cols=["pct_donors_major", "pct_revenue_major", "pct_revenue_major_with_unmatched"], pct_digits=2)
+```
+
+```{python}
+#| label: concentration-plot
+#| fig-height: 3.5
+# major donor share of donors and of revenue over time, against the problem statement's 1% and 19%
+
+conc_long = (
+    concentration.select("fy", pl.col("pct_donors_major").alias("Share of donors"),
+                         pl.col("pct_revenue_major").alias("Share of revenue"))
+    .unpivot(index="fy", variable_name="measure", value_name="share")
+)
+claims = pl.DataFrame({"measure": ["Share of donors", "Share of revenue"], "claim": [0.01, 0.19]})
+
+(
+    ggplot(conc_long.to_pandas(), aes("fy", "share"))
+    + geom_line()
+    + geom_point(size=1.2)
+    + geom_hline(claims.to_pandas(), aes(yintercept="claim"), linetype="dashed", color="firebrick")
+    + geom_vline(xintercept=2020.5, linetype="dotted", color="grey")
+    + facet_wrap("~measure", scales="free_y")
+    + scale_y_continuous(labels=lambda b: [f"{v:.1%}" for v in b])
+    + labs(x="Fiscal year", y="", title="Major donors ($1,200+) as a share of donors and of revenue",
+           subtitle="Red dashed lines show the problem statement's figures (1% and 19%)")
+)
+```
+
+The data does not reproduce the problem statement's figures. From FY2021 to FY2026, major donors are between `{python} pct(recent["pct_donors_major"].min(), 2)` and `{python} pct(recent["pct_donors_major"].max(), 2)` of donors each year (`{python} pct(pooled_recent["donors"], 2)` pooled), and they give between `{python} pct(recent["pct_revenue_major"].min())` and `{python} pct(recent["pct_revenue_major"].max())` of revenue (`{python} pct(pooled_recent["revenue"])` pooled). That is roughly a third of the claimed share of donors and less than half the claimed share of revenue. The legacy years are a little more concentrated, with majors at `{python} pct(legacy_era["pct_donors_major"].min(), 2)` to `{python} pct(legacy_era["pct_donors_major"].max(), 2)` of donors from FY2011 to FY2020, but they still fall short of 1%.
+
+To make sure this was not caused by my definition, I tried several alternatives on the FY2021 to FY2026 data.
+
+```{python}
+#| label: alt-definitions
+
+recent_panel = panel.filter(pl.col("fy") >= 2021)
+
+def pooled_share(df, threshold):
+    flag = pl.col("total") >= threshold
+    return df.select(
+        pct_donors_major=flag.sum() / pl.len(),
+        pct_revenue_major=pl.col("total").filter(flag).sum() / pl.col("total").sum(),
+    ).row(0, named=True)
+
+# spouses combined into one household record
+pairs = con.filter(pl.col("spouse_constituent_id").is_not_null()).select(
+    "constituent_id", household=pl.min_horizontal("constituent_id", "spouse_constituent_id")
+)
+household_panel = (
+    recent_panel.join(pairs, on="constituent_id", how="left")
+    .with_columns(household=pl.coalesce("household", "constituent_id"))
+    .group_by("household", "fy").agg(total=pl.col("total").sum())
+)
+
+alt_defs = pl.DataFrame([
+    {"definition": "Individual, $1,200 (main definition)", **pooled_share(recent_panel, 1200)},
+    {"definition": "Individual, $1,000 (Broadcaster floor)", **pooled_share(recent_panel, 1000)},
+    {"definition": "Spouses combined, $1,200", **pooled_share(household_panel, 1200)},
+    {"definition": "Individual, $500", **pooled_share(recent_panel, 500)},
+])
+show(alt_defs, pct_cols=["pct_donors_major", "pct_revenue_major"], pct_digits=2)
+```
+
+Lowering the threshold to the $1,000 Broadcaster floor or combining spouses barely changes the result. The threshold has to drop to about $500 before major donors reach 1% of donors, and even then their share of revenue is well below 19%. The problem statement's figures likely come from PBS Utah's own reporting, which may use a different donor base or time period. Either way, the base rate for this project should come from the data, and this difference is added to the data concerns at the top.
+
+### Distribution of Annual Giving
+
+Before measuring conversion, it helps to see what annual giving looks like around the $1,200 line. If many donors give just under it, the jump to major giving is small and prior-year amount should predict it well.
+
+```{python}
+#| label: giving-distribution
+#| fig-height: 3.5
+# histogram of annual giving per person on a log scale, with the tier floors marked
+
+(
+    ggplot(recent_panel.to_pandas(), aes("total"))
+    + geom_histogram(bins=80, fill="steelblue")
+    + geom_vline(xintercept=TIERS, linetype="dashed", color="firebrick", size=0.4)
+    + scale_x_log10(labels=lambda b: [f"${v:,.0f}" for v in b])
+    + scale_y_sqrt()
+    + labs(x="Annual giving (log scale)", y="Person-years (square root scale)",
+           title="Annual giving per person, FY2021 to FY2026",
+           subtitle="Red lines mark the tier floors: $1,200, $2,000, $5,000, $10,000, $15,000")
+)
+```
+
+```{python}
+#| label: threshold-detail
+# person-years in narrow bands around each tier floor, including exact tier amounts
+
+edges = [0, 250, 500, 750, 1000, 1200, 1200.01, 1500, 2000, 2000.01, 5000, 5000.01, 10000, 10000.01, 15000]
+labels = ["under $250", "$250 to $499", "$500 to $749", "$750 to $999", "$1,000 to $1,199", "exactly $1,200",
+          "$1,200.01 to $1,499", "$1,500 to $1,999", "exactly $2,000", "$2,000.01 to $4,999", "exactly $5,000",
+          "$5,000.01 to $9,999", "exactly $10,000", "$10,000.01 to $14,999", "$15,000 and up"]
+giving_bands = (
+    recent_panel.with_columns(band=pl.col("total").cut(edges[1:], labels=labels, left_closed=True))
+    .group_by("band").agg(person_years=pl.len())
+    .join(pl.DataFrame({"band": labels, "order": range(len(labels))}).with_columns(pl.col("band").cast(pl.Categorical)), on="band", how="right")
+    .with_columns(pl.col("person_years").fill_null(0))
+    .sort("order").drop("order").select("band", "person_years")
+)
+
+recent_majors = recent_panel.filter(pl.col("major"))
+exact_tier = recent_majors.filter(pl.col("total").is_in(TIERS)).height
+nonmajor_max = recent_panel.filter(~pl.col("major"))["total"].max()
+just_under = recent_panel.filter(pl.col("total").is_between(750, 1200, closed="left")).height
+just_over = recent_panel.filter((pl.col("total") > 1200) & (pl.col("total") < 2000)).height
+majors_with_soft = (recent_majors["soft_amt"] > 0).mean()
+soft_years_major = recent_panel.filter(pl.col("soft_amt") > 0)["major"].mean()
+median_gift = recent_panel["total"].median()
+p99_gift = recent_panel["total"].quantile(0.99)
+
+show(giving_bands)
+```
+
+The distribution is not smooth around the threshold:
+
+- The median donor gives `{python} usd(median_gift)` a year, and the 99th percentile is `{python} usd(p99_gift)`.
+- No non-major donor-year exceeds `{python} usd(nonmajor_max)`, and only `{python} n(just_under)` donor-years fall between $750 and $1,199. Above the line there is a second gap: `{python} "no" if just_over == 0 else n(just_over)` donor-years fall strictly between $1,200 and $2,000.
+- `{python} n(exact_tier)` of the `{python} n(recent_majors.height)` major donor-years (`{python} pct(exact_tier / recent_majors.height)`) total exactly $1,200, $2,000, $5,000, or $10,000.
+- `{python} pct(majors_with_soft)` of major donor-years include a soft credit, while only `{python} pct(soft_years_major)` of donor-years with a soft credit are major.
+
+So major giving does not grow gradually out of regular giving. Donors either give at the regular level, which tops out a few hundred dollars short of $1,200, or they give at a tier amount. For modeling this means the move into major giving is a jump in dollars, not a small step over the line. That does not make prior-year giving useless, though. The next section shows that future major donors still come almost entirely from the top of the regular giving range. It also means that soft credits, which record gifts paid through donor-advised funds and other sponsoring organizations, are tied closely to major giving. Whether a soft credit in an earlier year predicts a later conversion, or mostly shows up in the conversion year itself, is checked in the giving behavior section, because using same-year soft credits as a feature would leak the outcome. The clustering at exact tier amounts is unusual enough that it is listed in the data concerns at the top.
+
+### Tier Counts
+
+The problem statement asks for a predicted tier as well as a probability. The count of person-years reaching each tier shows how much data there is for that.
+
+```{python}
+#| label: tier-counts
+# person-years reaching each tier by fiscal year, FY2021 on
+
+tier_counts = (
+    recent_panel.filter(pl.col("major"))
+    .group_by("fy", "tier").agg(person_years=pl.len())
+    .with_columns(pl.col("tier").cast(pl.String))
+    .pivot(on="tier", index="fy", values="person_years")
+    .fill_null(0)
+    .sort("fy")
+    .select("fy", *[t for t in TIER_LABELS[1:]])
+)
+tier_totals = recent_panel.filter(pl.col("major")).group_by("tier").agg(person_years=pl.len())
+tier_n = {str(r["tier"]): r["person_years"] for r in tier_totals.iter_rows(named=True)}
+top_tiers = tier_n.get("$5,000", 0) + tier_n.get("$10,000", 0) + tier_n.get("$15,000+", 0)
+
+show(tier_counts)
+```
+
+Across six fiscal years there are `{python} n(tier_n.get("$1,200", 0))` person-years at the $1,200 tier and `{python} n(tier_n.get("$2,000", 0))` at the $2,000 tier, but only `{python} n(top_tiers)` at $5,000 and above combined, and just `{python} n(tier_n.get("$15,000+", 0))` at $15,000 and up. A model cannot learn five separate tiers from that. The top three tiers will likely need to be combined into a single "$5,000 and up" group, which is a change to raise with the team when the problem statement is revised.
+
+### Option A Versus Option D
+
+The last check compares the main panel, which credits spouse-shared legacy gifts to the first listed constituent, with the version that drops those gifts.
+
+```{python}
+#| label: option-a-vs-d
+
+majors_a = panel.filter(pl.col("major")).group_by("fy").agg(majors_a=pl.len())
+majors_d = panel_d.filter(pl.col("major")).group_by("fy").agg(majors_d=pl.len())
+a_vs_d = majors_a.join(majors_d, on="fy", how="full", coalesce=True).fill_null(0).with_columns(
+    difference=pl.col("majors_a") - pl.col("majors_d")
+)
+years_differ = a_vs_d.filter(pl.col("difference") != 0).sort("fy")
+max_diff = a_vs_d["difference"].abs().max()
+
+# person-years whose tier changes, including person-years that disappear under option D
+tier_change = (
+    panel.select("constituent_id", "fy", tier_a=pl.col("tier").cast(pl.String))
+    .join(panel_d.select("constituent_id", "fy", tier_d=pl.col("tier").cast(pl.String)),
+          on=["constituent_id", "fy"], how="left")
+    .with_columns(pl.col("tier_d").fill_null("no giving"))
+    .filter(pl.col("tier_a") != pl.col("tier_d"))
+)
+tier_change_major = tier_change.filter(pl.col("tier_a") != "under $1,200").height
+
+show(years_differ)
+```
+
+The two versions differ in only `{python} n(years_differ.height)` fiscal years, all before FY2021, and by at most `{python} n(max_diff)` major donors in any year. `{python} n(tier_change.height)` person-years change tier, almost all because a small legacy gift disappears under option D, and only `{python} n(tier_change_major)` of them are major donor-years. The choice between A and D has no practical effect, so the rest of the notebook uses option A. Option D will be rerun once more when conversion rates are calculated.
+
+### Summary for Modeling
+
+- Individual giving totals reconcile exactly with Unite revenue, and legacy history links cleanly to Unite donors, so the panel is a sound base for both the target and giving features.
+- Major giving is much rarer than the problem statement assumed: about `{python} n(recent["major_donors"].mean())` major donors a year out of roughly `{python} n(round(recent["donors"].mean(), -3))` donors. The conversion base rate in the next section will be correspondingly low.
+- Almost no donors give just below $1,200, and major donors mostly give exact tier amounts with a soft credit involved. Becoming a major donor is a jump in dollars, and soft credits need careful timing so they do not leak the outcome.
+- The upper tiers are too thin to model separately.
+- Spouse-shared legacy gifts do not affect the results.
+
+## Major Donors and Conversion
+
+### Definitions
+
+The model will be run at a prediction date and asked which current non-major donors will become major donors. I set the prediction date at the end of a fiscal year, so a cohort is named by the fiscal year that just ended (FY t).
+
+- **Eligible donors:** constituents who gave in FY t and gave less than $1,200 that year.
+- **Outcomes:** the donor gives $1,200 or more in FY t+1 (the 12 month outcome), in any year from FY t+1 to FY t+3 (within 3 years), or in any year from FY t+1 to FY t+5 (within 5 years).
+- **Groups:** eligible donors who were major donors in any year before FY t are "former majors." Everyone else is "never major." Results are reported for both, since lapsed major donors coming back are a different kind of prospect than first-time major donors.
+
+A cohort can only be scored if all of its outcome years are in the data, so the last usable cohort is FY2025 for 12 months, FY2023 for 3 years, and FY2021 for 5 years. Cohorts start in FY1999, when the legacy records become complete.
+
+```{python}
+#| label: cohorts
+
+LAST_FY = int(panel["fy"].max())
+WINDOWS = {1: "12 months", 3: "within 3 years", 5: "within 5 years"}
+
+def cohort(panel_df, t, window):
+    # eligible donors at the end of FY t, with their prior-year total and outcome
+    majors = panel_df.filter(pl.col("major")).select("constituent_id", "fy")
+    former = majors.filter(pl.col("fy") < t)["constituent_id"].unique().implode()
+    converted = majors.filter(pl.col("fy").is_between(t + 1, t + window))["constituent_id"].unique().implode()
+    return (
+        panel_df.filter((pl.col("fy") == t) & ~pl.col("major"))
+        .select("constituent_id", prior_total=pl.col("total"))
+        .with_columns(
+            former_major=pl.col("constituent_id").is_in(former),
+            converted=pl.col("constituent_id").is_in(converted),
+            t=pl.lit(t),
+            window=pl.lit(window),
+        )
+    )
+
+def build_cohorts(panel_df):
+    return pl.concat([
+        cohort(panel_df, t, w) for w in WINDOWS for t in range(1999, LAST_FY - w + 1)
+    ])
+
+cohorts = build_cohorts(panel)
+cohorts = cohorts.with_columns(
+    era=pl.when(pl.col("t") >= 2021).then(pl.lit("FY2021 on")).otherwise(pl.lit("FY1999 to FY2020")),
+    group=pl.when(pl.col("former_major")).then(pl.lit("former major")).otherwise(pl.lit("never major")),
+)
+```
+
+### Conversion Base Rates
+
+```{python}
+#| label: base-rates
+#| fig-height: 3.5
+# conversion rate for each cohort and outcome window
+
+rates_by_cohort = (
+    cohorts.group_by("window", "t")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"),
+                  outcome=pl.col("window").replace_strict(WINDOWS))
+    .sort("window", "t")
+)
+
+(
+    ggplot(rates_by_cohort.to_pandas(), aes("t", "rate", color="outcome"))
+    + geom_line()
+    + geom_point(size=1.2)
+    + geom_vline(xintercept=2020.5, linetype="dotted", color="grey")
+    + scale_y_continuous(labels=lambda b: [f"{v:.2%}" for v in b])
+    + labs(x="Cohort (fiscal year that just ended)", y="Share of eligible donors who convert",
+           color="Outcome", title="Conversion to major giving by cohort")
+)
+```
+
+```{python}
+#| label: pooled-rates
+# conversion pooled across cohorts, by era and by never-major versus former-major donors
+
+def pooled(df, by):
+    return (
+        df.group_by(by)
+        .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+        .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    )
+
+pooled_rates = (
+    pl.concat([
+        pooled(cohorts, ["window", "era"]).with_columns(group=pl.lit("all eligible")),
+        pooled(cohorts, ["window", "era", "group"]),
+    ], how="diagonal")
+    .with_columns(outcome=pl.col("window").replace_strict(WINDOWS))
+    .sort("window", "era", "group")
+    .select("outcome", "era", "group", "eligible", "converters", "rate")
+)
+
+def rate_of(window, era, group):
+    row = pooled_rates.filter((pl.col("outcome") == WINDOWS[window]) & (pl.col("era") == era) & (pl.col("group") == group))
+    return row.row(0, named=True)
+
+r12 = rate_of(1, "FY2021 on", "all eligible")
+r12_never = rate_of(1, "FY2021 on", "never major")
+r12_former = rate_of(1, "FY2021 on", "former major")
+r3 = rate_of(3, "FY2021 on", "all eligible")
+r5 = rate_of(5, "FY2021 on", "all eligible")
+r12_legacy = rate_of(1, "FY1999 to FY2020", "all eligible")
+rates_12_all = rates_by_cohort.filter(pl.col("window") == 1)
+recent_12 = rates_12_all.filter(pl.col("t") >= 2021)
+
+show(pooled_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+Conversion is rare. For cohorts from FY2021 on, `{python} pct(r12["rate"], 2)` of eligible donors become major donors the next year (`{python} n(r12["converters"])` converters out of `{python} n(r12["eligible"])` eligible donor-years), or about `{python} n(recent_12["converters"].mean())` people per year out of roughly `{python} n(round(recent_12["eligible"].mean(), -3))`. The rate rises to `{python} pct(r3["rate"], 2)` within 3 years and `{python} pct(r5["rate"], 2)` within 5 years. The pooled legacy-era 12 month rate (`{python} pct(r12_legacy["rate"], 2)`) is similar, but single cohorts vary a lot. The 12 month rate ranges from `{python} pct(rates_12_all["rate"].min(), 2)` (FY`{python} rates_12_all.sort("rate")["t"][0]` cohort) to `{python} pct(rates_12_all["rate"].max(), 2)` (FY`{python} rates_12_all.sort("rate")["t"][-1]` cohort), and it was generally lower in the early 2000s than it is now. Among recent cohorts, FY2025 stands out, since its conversions happen in FY2026, the year after federal funding ended. With only around `{python} n(recent_12["converters"].mean())` converters a year, any one cohort's results will be noisy, which matters when models are compared on just a few backtest years.
+
+### Former Major Donors
+
+The split by group is the most important result in this section. Former majors convert at `{python} pct(r12_former["rate"])` over 12 months, compared with `{python} pct(r12_never["rate"], 3)` for donors who were never major. Former majors are only `{python} pct(r12_former["eligible"] / r12["eligible"])` of eligible donors, but they account for `{python} pct(r12_former["converters"] / r12["converters"])` of 12 month converters (`{python} n(r12_former["converters"])` of `{python} n(r12["converters"])`).
+
+This matters for how the model is judged. Staff probably already know their lapsed major donors, so a list that mostly surfaces them would score well on recall without telling staff much they did not already know. The model's results should be reported for never-major donors on their own, and former major status should be an explicit feature so its effect is visible.
+
+### Where New Major Donors Come From
+
+The eligible population only includes people who gave in FY t. If many new major donors come from people who did not give that year, those people are outside the list no matter how good the model is. The table below sorts each year's new major donors (major this year but not last year) by where they came from.
+
+```{python}
+#| label: major-sources
+# where each year's new major donors came from: gave last year, lapsed donor, or first gift
+
+def major_sources(fy):
+    majors_now = panel.filter((pl.col("fy") == fy) & pl.col("major"))["constituent_id"]
+    majors_before = panel.filter((pl.col("fy") == fy - 1) & pl.col("major"))["constituent_id"]
+    gave_last_year = panel.filter(pl.col("fy") == fy - 1)["constituent_id"]
+    gave_ever_before = panel.filter(pl.col("fy") < fy)["constituent_id"].unique()
+    new = majors_now.filter(~majors_now.is_in(majors_before.implode()))
+    return {
+        "fy": fy,
+        "repeat_majors": majors_now.is_in(majors_before.implode()).sum(),
+        "new_majors": new.len(),
+        "gave_last_year": new.is_in(gave_last_year.implode()).sum(),
+        "lapsed_donor": (~new.is_in(gave_last_year.implode()) & new.is_in(gave_ever_before.implode())).sum(),
+        "first_gift": (~new.is_in(gave_ever_before.implode())).sum(),
+    }
+
+sources = pl.DataFrame([major_sources(fy) for fy in range(2017, LAST_FY + 1)])
+src_recent = sources.filter(pl.col("fy") >= 2022).select(pl.exclude("fy").sum()).row(0, named=True)
+
+show(sources)
+```
+
+From FY2022 to FY2026 there were `{python} n(src_recent["new_majors"])` new major donors. `{python} n(src_recent["gave_last_year"])` of them (`{python} pct(src_recent["gave_last_year"] / src_recent["new_majors"])`) gave in the year before, so they were in the eligible population. Another `{python} n(src_recent["lapsed_donor"])` were lapsed donors who skipped the prior year, and only `{python} n(src_recent["first_gift"])` became major donors with their first gift. The eligibility rule therefore covers about nine in ten new major donors. The other tenth cannot appear on any list built from the eligible population, which is a small but real limit on how many of each year's new major donors the model can reach. Each year there are also `{python} n(sources.filter(pl.col("fy") >= 2022)["repeat_majors"].mean())` repeat major donors on average, who are outside this project's population because they are already major.
+
+### Tier Reached at Conversion
+
+```{python}
+#| label: conversion-tiers
+# tier reached in the conversion year by 12 month converters, FY2021 on
+
+conv_tiers = (
+    cohorts.filter((pl.col("window") == 1) & (pl.col("t") >= 2021) & pl.col("converted"))
+    .select("constituent_id", fy=pl.col("t") + 1)
+    .join(panel.select("constituent_id", "fy", "tier"), on=["constituent_id", "fy"])
+    .group_by("tier").agg(converters=pl.len())
+    .with_columns(share=pl.col("converters") / pl.col("converters").sum())
+    .sort("tier")
+)
+tier_conv = {str(r["tier"]): r["converters"] for r in conv_tiers.iter_rows(named=True)}
+conv_top = sum(v for k, v in tier_conv.items() if k in ("$5,000", "$10,000", "$15,000+"))
+
+show(conv_tiers, pct_cols=["share"])
+```
+
+Of the `{python} n(r12["converters"])` 12 month converters since FY2021, `{python} n(tier_conv.get("$1,200", 0))` reach the $1,200 tier, `{python} n(tier_conv.get("$2,000", 0))` reach $2,000, and only `{python} n(conv_top)` reach $5,000 or more. This supports collapsing the top three tiers, and it means the tier part of the model is mostly a choice between $1,200 and $2,000.
+
+### Prior-Year Giving and the 25% Target
+
+The problem statement sets a target of at least 25% of converters in the top 10% of the ranked list, to be confirmed once the base rate is known. A useful first check is how a very simple ranking does: sort eligible donors by how much they gave in FY t. If that alone beats 25%, the target is too easy to show that a model adds value.
+
+```{python}
+#| label: prior-giving-bands
+# 12 month conversion by band of prior-year giving, FY2021 to FY2025 cohorts
+
+BAND_LABELS = ["$60 or less", "$61 to $120", "$121 to $240", "$241 to $500", "$501 to $750", "over $750"]
+bands_12 = (
+    cohorts.filter((pl.col("window") == 1) & (pl.col("t") >= 2021))
+    .with_columns(prior_band=pl.col("prior_total").cut([60, 120, 240, 500, 750], labels=BAND_LABELS)
+                  .cast(pl.Enum(BAND_LABELS)))
+    .group_by("prior_band")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"),
+                  share_of_converters=pl.col("converters") / pl.col("converters").sum())
+    .sort("prior_band")
+)
+top_band = bands_12.filter(pl.col("prior_band") == "$501 to $750").row(0, named=True)
+
+show(bands_12, pct_cols=["rate", "share_of_converters"], pct_digits=2)
+```
+
+```{python}
+#| label: simple-ranking
+
+def ranked_recall(df, k):
+    # expected recall when ranking by prior_total, with random order inside ties at the cutoff
+    df = df.sort("prior_total", descending=True)
+    cut = df["prior_total"][k - 1]
+    above = df.filter(pl.col("prior_total") > cut)
+    tied = df.filter(pl.col("prior_total") == cut)
+    expected = above["converted"].sum() + tied["converted"].sum() * (k - above.height) / tied.height
+    return expected / df["converted"].sum()
+
+recall_rows = []
+for (w, t), d in cohorts.filter(pl.col("t") >= 2021).group_by("window", "t"):
+    never = d.filter(~pl.col("former_major"))
+    recall_rows.append({
+        "outcome": WINDOWS[w], "cohort": t, "eligible": d.height, "converters": d["converted"].sum(),
+        "recall_top_10pct": ranked_recall(d, round(d.height * 0.10)),
+        "recall_top_1000": ranked_recall(d, 1000),
+        "never_major_recall_top_10pct": ranked_recall(never, round(never.height * 0.10)),
+    })
+simple_recall = pl.DataFrame(recall_rows).sort("outcome", "cohort")
+rec12 = simple_recall.filter(pl.col("outcome") == "12 months")
+rec3 = simple_recall.filter(pl.col("outcome") == "within 3 years")
+rec5 = simple_recall.filter(pl.col("outcome") == "within 5 years")
+
+show(simple_recall, pct_cols=["recall_top_10pct", "recall_top_1000", "never_major_recall_top_10pct"])
+```
+
+Prior-year giving is a strong signal even though nobody gives just under $1,200. Donors who gave $501 to $750 convert at `{python} pct(top_band["rate"])` and make up `{python} pct(top_band["share_of_converters"])` of 12 month converters, while donors under $240 almost never convert. As a result, the one-variable ranking puts `{python} pct(rec12["recall_top_10pct"].min())` to `{python} pct(rec12["recall_top_10pct"].max())` of 12 month converters in the top 10%, `{python} pct(rec3["recall_top_10pct"].min())` to `{python} pct(rec3["recall_top_10pct"].max())` of 3 year converters, and `{python} pct(rec5["recall_top_10pct"][0])` of 5 year converters. Even among never-major donors it reaches `{python} pct(rec12["never_major_recall_top_10pct"].min())` to `{python} pct(rec12["never_major_recall_top_10pct"].max())` for 12 months.
+
+This changes how success should be defined:
+
+- **The 25% target is too low.** A ranking a staff member could build in a spreadsheet already clears it by a wide margin, so meeting it would not show that the model adds anything.
+- **The top 10% is larger than staff can work.** Ten percent of about `{python} n(round(recent_12["eligible"].mean(), -3))` eligible donors is about `{python} n(round(recent_12["eligible"].mean() * 0.1, -2))` people, while the cultivation program's capacity is 1,000 donors a year (8 portfolios of 125). Recall at 1,000 is a more realistic measure, and the simple ranking already gets `{python} pct(rec12["recall_top_1000"].min())` to `{python} pct(rec12["recall_top_1000"].max())` there for 12 months.
+- **The baseline to beat is prior-year giving, not random selection.** The recency, frequency, and value baseline in the problem statement includes giving amount, so it should do at least roughly as well as this ranking. The model's value should be shown as lift over it, especially for never-major donors and the longer windows, where the simple ranking does worse.
+
+These points are carried into the revisions section at the end of the notebook.
+
+### Number of Backtest Cohorts
+
+```{python}
+#| label: cohort-counts
+# number of cohorts available for each outcome window, with and without solicitation and Passport data
+
+cohort_counts = pl.DataFrame([
+    {
+        "outcome": WINDOWS[w],
+        "last_cohort": LAST_FY - w,
+        "cohorts_giving_history_only": LAST_FY - w - 1999 + 1,
+        "cohorts_with_solicitation_and_passport": max(0, LAST_FY - w - 2021 + 1),
+    }
+    for w in WINDOWS
+])
+show(cohort_counts)
+```
+
+With giving history alone there are plenty of cohorts for every window. Once solicitation and Passport features are included, which only start in FY2021, the 12 month outcome has 5 cohorts, the 3 year outcome has 3, and the 5 year outcome has only one. The problem statement allows for this: if the data spans too few years, the 12 month window becomes the tested outcome and the 3 to 5 year window is reported as a projection. A reasonable plan is to test the 12 month and 3 year outcomes with full features, and to check the 5 year outcome with giving history only, where there are enough cohorts.
+
+### Option D Check on Conversion
+
+```{python}
+#| label: option-d-conversion
+# rebuild the cohorts from the option D panel and compare counts with option A
+
+cohorts_d = build_cohorts(panel_d)
+rates_a = cohorts.group_by("window", "t").agg(eligible_a=pl.len(), converters_a=pl.col("converted").sum())
+rates_d = cohorts_d.group_by("window", "t").agg(eligible_d=pl.len(), converters_d=pl.col("converted").sum())
+ad = rates_a.join(rates_d, on=["window", "t"])
+conv_diff_max = ad.select((pl.col("converters_a") - pl.col("converters_d")).abs().max()).item()
+conv_diff_recent = ad.filter(pl.col("t") >= 2021).select(
+    (pl.col("converters_a") - pl.col("converters_d")).abs().max() + (pl.col("eligible_a") - pl.col("eligible_d")).abs().max()
+).item()
+```
+
+Dropping spouse-shared legacy gifts changes the number of converters in any cohort by at most `{python} n(conv_diff_max)`, and `{python} "does not change any count" if conv_diff_recent == 0 else "changes counts slightly"` for cohorts from FY2021 on. The choice of option A is confirmed.
+
+### Summary for Modeling
+
+- The 12 month conversion rate is about `{python} pct(r12["rate"], 2)`, roughly `{python} n(recent_12["converters"].mean())` converters a year. This is an extremely imbalanced target, so models should be compared on ranking measures (recall and precision at a fixed list size, lift) and not on accuracy.
+- Half of converters are former major donors who convert at about `{python} pct(r12_former["rate"], 0)` a year. Results should be reported separately for never-major donors.
+- About nine in ten new major donors gave in the prior year, so the eligibility rule loses little.
+- Prior-year giving alone beats the 25% target several times over. The target and the list size should be revised, and the main comparison should be against a prior-year giving or RFV baseline.
+- The 12 month and 3 year outcomes can be backtested with all features. The 5 year outcome can only be backtested with giving history.
+
+## Giving Behavior and Conversion
+
+This section looks at which parts of a donor's giving history come before a conversion, and builds the recency, frequency, and value (RFV) baseline promised in the problem statement. Every feature is measured at the end of FY t using only gifts made through FY t, so nothing here uses information from the outcome year. The analysis uses the five Unite-era cohorts (FY2021 to FY2025) and the 12 month outcome, and reports rates for all eligible donors and for never-major donors separately.
+
+### Features at the Prediction Date
+
+```{python}
+#| label: features
+
+import datetime as dt
+
+# every individual gift with its date, used for recency
+gifts = pl.concat([
+    pay_clean.filter(~pl.col("donor_id").is_in(ORG_IDS))
+    .select(constituent_id=pl.col("donor_id"), date=pl.col("credit_date"), amount=pl.col("payment_amount")),
+    sc_clean.select(constituent_id=pl.col("soft_credit_constituent_id"), date=pl.col("credit_date"), amount=pl.col("credit_amount")),
+    ta_clean.select(constituent_id=pl.col("constituent_id_1"), date=pl.col("gift_date"), amount=pl.col("payment_amount")),
+])
+
+# Unite gift type labels and recurring payment counts by person and fiscal year
+gift_labels = (
+    pay_clean.filter(~pl.col("donor_id").is_in(ORG_IDS))
+    .group_by(constituent_id=pl.col("donor_id"), fy=fiscal_year("credit_date"))
+    .agg(
+        upgrade_gift=(pl.col("gift_type") == "Upgrade").any(),
+        additional_gift=(pl.col("gift_type") == "Additional").any(),
+        recurring_payments=(pl.col("pledge_gift_type") == "Recurring").sum(),
+    )
+)
+first_gift_fy = panel.group_by("constituent_id").agg(first_fy=pl.col("fy").min())
+
+def features(t):
+    # one row per eligible donor at the end of FY t, using only data through FY t
+    end = dt.date(t, 6, 30)
+    eligible = cohorts.filter((pl.col("t") == t) & (pl.col("window") == 1)).select(
+        "constituent_id", "t", "prior_total", "former_major", "converted"
+    )
+    this_year = panel.filter(pl.col("fy") == t).select("constituent_id", "recurring_amt", "soft_amt")
+    last_year = panel.filter(pl.col("fy") == t - 1).select("constituent_id", prev_total=pl.col("total"))
+    history = panel.filter(pl.col("fy") <= t).group_by("constituent_id").agg(
+        years_last5=pl.col("fy").filter(pl.col("fy") >= t - 4).n_unique(),
+        soft_before=(pl.col("soft_amt").filter(pl.col("fy") < t) > 0).any(),
+    )
+    last_gift = gifts.filter(pl.col("date") <= end).group_by("constituent_id").agg(last_gift=pl.col("date").max())
+    return (
+        eligible.join(this_year, on="constituent_id", how="left")
+        .join(last_year, on="constituent_id", how="left")
+        .join(history, on="constituent_id", how="left")
+        .join(last_gift, on="constituent_id", how="left")
+        .join(first_gift_fy, on="constituent_id", how="left")
+        .join(gift_labels.filter(pl.col("fy") == t).drop("fy"), on="constituent_id", how="left")
+        .with_columns(
+            recency_days=(pl.lit(end) - pl.col("last_gift")).dt.total_days(),
+            tenure_years=pl.col("t") - pl.col("first_fy") + 1,
+            prev_total=pl.col("prev_total").fill_null(0),
+            monthly_amount=pl.when(pl.col("recurring_payments") > 0)
+            .then(pl.col("recurring_amt") / pl.col("recurring_payments")),
+            upgrade_gift=pl.col("upgrade_gift").fill_null(False),
+            additional_gift=pl.col("additional_gift").fill_null(False),
+            soft_this_year=pl.col("soft_amt") > 0,
+        )
+    )
+
+feat = pl.concat([features(t) for t in range(2021, LAST_FY)])
+base_all = feat["converted"].mean()
+base_never = feat.filter(~pl.col("former_major"))["converted"].mean()
+```
+
+### Signals From Giving History
+
+The table and plot below show the 12 month conversion rate for each level of several features, along with its lift over the base rate (`{python} pct(base_all, 3)` for all eligible donors and `{python} pct(base_never, 3)` for never-major donors).
+
+```{python}
+#| label: feature-signals
+
+def change_label():
+    return (
+        pl.when(pl.col("prev_total") == 0).then(pl.lit("no gift last year"))
+        .when(pl.col("prior_total") > pl.col("prev_total")).then(pl.lit("gave more than last year"))
+        .when(pl.col("prior_total") < pl.col("prev_total")).then(pl.lit("gave less than last year"))
+        .otherwise(pl.lit("gave the same"))
+    )
+
+signal_specs = [
+    ("Years given, last 5", pl.col("years_last5").cast(pl.String) + pl.lit(" of 5")),
+    ("Years since first gift", pl.col("tenure_years").cut([1, 3, 10], labels=["1", "2 to 3", "4 to 10", "over 10"])),
+    ("Change from last year", change_label()),
+    ("Upgrade gift in FY t", pl.when(pl.col("upgrade_gift")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Additional gift in FY t", pl.when(pl.col("additional_gift")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Monthly sustainer amount", pl.when(pl.col("monthly_amount").is_null()).then(pl.lit("not a sustainer"))
+        .when(pl.col("monthly_amount") <= 10).then(pl.lit("$10 or less"))
+        .when(pl.col("monthly_amount") <= 25).then(pl.lit("$11 to $25"))
+        .otherwise(pl.lit("over $25"))),
+    ("Soft credit before FY t", pl.when(pl.col("soft_before")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Soft credit in FY t", pl.when(pl.col("soft_this_year")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Days since last gift", pl.col("recency_days").cut([30, 90, 180], labels=["30 or less", "31 to 90", "91 to 180", "over 180"])),
+]
+
+def signal_rates(df, base):
+    out = []
+    for name, expr in signal_specs:
+        out.append(
+            df.with_columns(level=expr.cast(pl.String))
+            .group_by("level").agg(eligible=pl.len(), converters=pl.col("converted").sum())
+            .with_columns(feature=pl.lit(name), rate=pl.col("converters") / pl.col("eligible"))
+            .with_columns(lift=pl.col("rate") / base)
+        )
+    return pl.concat(out)
+
+sig_all = signal_rates(feat, base_all)
+sig_never = signal_rates(feat.filter(~pl.col("former_major")), base_never)
+signals = (
+    sig_all.join(sig_never.select("feature", "level", never_rate="rate", never_lift="lift"), on=["feature", "level"], how="left")
+    .select("feature", "level", "eligible", "converters", "rate", "lift", "never_rate", "never_lift")
+    .sort("feature", "level")
+)
+
+def sig(feature, level, col="rate"):
+    return signals.filter((pl.col("feature") == feature) & (pl.col("level") == level))[col][0]
+
+# share of monthly sustainers in the 31 to 90 day recency band
+sust_31_90 = feat.filter(pl.col("recency_days").is_between(31, 90))["recurring_amt"].gt(0).mean()
+
+show(signals.with_columns(pl.col("lift", "never_lift").round(2)), pct_cols=["rate", "never_rate"], pct_digits=3)
+```
+
+```{python}
+#| label: lift-plot
+#| fig-height: 7
+
+lift_long = pl.concat([
+    sig_all.select("feature", "level", "lift", group=pl.lit("All eligible")),
+    sig_never.select("feature", "level", "lift", group=pl.lit("Never major")),
+]).filter(pl.col("lift") > 0).with_columns(
+    # escape dollar signs so matplotlib does not read them as math
+    label=(pl.col("feature") + ": " + pl.col("level")).str.replace_all("$", r"\$", literal=True)
+)
+
+(
+    ggplot(lift_long.to_pandas(), aes("lift", "label", color="group"))
+    + geom_vline(xintercept=1, linetype="dashed", color="grey")
+    + geom_point(size=2.5)
+    + scale_x_log10()
+    + labs(x="Lift over the base rate (log scale)", y="", color="",
+           title="Conversion lift by feature level",
+           subtitle="12 month outcome, FY2021 to FY2025 cohorts")
+    + theme(figure_size=(8, 7))
+)
+```
+
+Several parts of giving history separate future major donors from everyone else:
+
+- **Consistency.** Donors who gave in all five of the last five years convert at `{python} pct(sig("Years given, last 5", "5 of 5"), 2)`, compared with `{python} pct(sig("Years given, last 5", "1 of 5"), 2)` for donors who gave in only one. Longer giving histories show the same pattern, and first-year donors almost never convert.
+- **Direction of change.** Among never-major donors, those who gave more than the year before convert at `{python} pct(sig("Change from last year", "gave more than last year", "never_rate"), 2)`, about `{python} f'{sig("Change from last year", "gave more than last year", "never_lift"):.1f}'` times the base rate, while those who gave less convert at `{python} pct(sig("Change from last year", "gave less than last year", "never_rate"), 3)`.
+- **Upgrade gifts.** A gift labeled "Upgrade" in FY t raises the 12 month rate to `{python} pct(sig("Upgrade gift in FY t", "yes"), 2)`, roughly `{python} f'{sig("Upgrade gift in FY t", "yes", "lift"):.0f}'` times the base rate, and the effect holds for never-major donors. Because the label is attached to a gift in FY t, it is known at the prediction date and can be used.
+- **Soft credits in an earlier year.** Donors with a soft credit before FY t convert at `{python} pct(sig("Soft credit before FY t", "yes"), 2)`, compared with `{python} pct(sig("Soft credit before FY t", "no"), 3)` for those without one.
+- **Sustainers convert less.** Monthly sustainers convert at a lower rate than donors who are not on a monthly plan, and none of the `{python} n(signals.filter((pl.col("feature") == "Monthly sustainer amount") & (pl.col("level") == "over $25"))["eligible"][0])` eligible donor-years giving over $25 a month converted. Monthly giving seems to be a separate path from major giving, not a step toward it.
+- **Recency is mixed.** Donors whose last gift came within 30 days of year end convert most often, but the next band (31 to 90 days) converts less often than donors whose last gift was more than 90 days before year end. Monthly sustainers make up `{python} pct(sust_31_90)` of that middle band, so recency is partly a stand-in for sustainer status here.
+
+### Soft Credit Timing
+
+Soft credits were tied closely to major giving in the panel section, so the timing matters. A soft credit in the same year a donor becomes major is part of the outcome, not a predictor of it.
+
+```{python}
+#| label: soft-timing
+
+converters_12 = feat.filter(pl.col("converted")).select("constituent_id", "t", soft_before_or_t=pl.col("soft_before") | pl.col("soft_this_year"), soft_t=pl.col("soft_this_year"))
+conversion_year_soft = panel.select("constituent_id", t=pl.col("fy") - 1, soft_conversion_year=pl.col("soft_amt") > 0)
+soft_timing = converters_12.join(conversion_year_soft, on=["constituent_id", "t"], how="left")
+soft_in_t = soft_timing["soft_t"].mean()
+soft_in_conv = soft_timing["soft_conversion_year"].mean()
+soft_new_in_conv = (soft_timing["soft_conversion_year"] & ~soft_timing["soft_before_or_t"]).mean()
+```
+
+Among 12 month converters, `{python} pct(soft_in_conv)` have a soft credit in the year they convert, but only `{python} pct(soft_in_t)` had one in FY t, and `{python} pct(soft_new_in_conv)` received their first soft credit in the conversion year itself. So most major giving arrives through a soft credit in the same year, often the donor's first. For modeling:
+
+- Soft credits from FY t and earlier are fair features and carry real signal.
+- Soft credits from the outcome year must never be used, and any feature built from "lifetime" soft credits has to be cut off at the prediction date.
+- Because `{python} pct(soft_new_in_conv)` of converters have no soft credit before the conversion year, the model will have to find a large share of them through other signals.
+
+### Recency, Frequency, and Value Baseline
+
+The problem statement compares the model against an RFV baseline. I built the standard version: each eligible donor gets a 1 to 5 score on each part, and the three scores are added (3 to 15).
+
+- **Recency:** days from the last gift to the end of FY t, split into quintiles (most recent = 5).
+- **Frequency:** number of fiscal years with a gift in the last five (1 to 5).
+- **Value:** total giving in FY t, split into quintiles (highest = 5).
+
+Quintiles are computed within each cohort. The table compares this score with the simpler ranking by prior-year total from the previous section, using recall in the top 10%, recall and precision in the top 1,000 (about the size of the cultivation program), and lift at 1,000. Ties at the cutoff are handled the same way as before.
+
+```{python}
+#| label: rfv
+
+def quintile(col, descending=False):
+    # 1 to 5 score from the within-cohort percentile rank, with ties sharing a rank
+    pct_rank = pl.col(col).rank("average", descending=descending) / pl.len()
+    return (pct_rank * 5).ceil().clip(1, 5).cast(pl.Int32).over("t")
+
+scored = feat.with_columns(
+    r_score=quintile("recency_days", descending=True),
+    f_score=pl.col("years_last5").cast(pl.Int32),
+    v_score=quintile("prior_total"),
+).with_columns(rfv=pl.col("r_score") + pl.col("f_score") + pl.col("v_score"))
+
+def top_k(df, col, k):
+    # expected recall and precision in the top k by col, random order inside ties
+    df = df.sort(col, descending=True)
+    cut = df[col][k - 1]
+    above = df.filter(pl.col(col) > cut)
+    tied = df.filter(pl.col(col) == cut)
+    hits = above["converted"].sum() + tied["converted"].sum() * (k - above.height) / tied.height
+    return hits / df["converted"].sum(), hits / k
+
+baseline_rows = []
+for (t,), d in scored.group_by("t"):
+    for group, dd in [("all eligible", d), ("never major", d.filter(~pl.col("former_major")))]:
+        for name, col in [("prior-year total", "prior_total"), ("RFV score", "rfv")]:
+            r10, _ = top_k(dd, col, round(dd.height * 0.10))
+            r1k, p1k = top_k(dd, col, 1000)
+            baseline_rows.append({
+                "group": group, "baseline": name, "cohort": t,
+                "recall_top_10pct": r10, "recall_top_1000": r1k, "precision_top_1000": p1k,
+                "lift_top_1000": p1k / dd["converted"].mean(),
+            })
+baselines = pl.DataFrame(baseline_rows)
+baseline_summary = (
+    baselines.group_by("group", "baseline")
+    .agg(pl.col("recall_top_10pct", "recall_top_1000", "precision_top_1000", "lift_top_1000").mean())
+    .sort("group", "baseline")
+)
+
+def bl(group, baseline, col):
+    return baseline_summary.filter((pl.col("group") == group) & (pl.col("baseline") == baseline))[col][0]
+
+v5_floor = scored.filter(pl.col("v_score") == 5)["prior_total"].min()
+
+# conversion and sustainer share by recency score
+by_r = scored.group_by("r_score").agg(
+    rate=pl.col("converted").mean(), sustainer_share=(pl.col("recurring_amt") > 0).mean()
+).sort("r_score")
+r_rate = dict(zip(by_r["r_score"], by_r["rate"]))
+r_sust_mid = scored.filter(pl.col("r_score").is_in([3, 4]))["recurring_amt"].gt(0).mean()
+share_600 = feat.filter(pl.col("prior_total").is_between(500, 750, closed="right")).select((pl.col("prior_total") == 600).mean()).item()
+
+show(baseline_summary.with_columns(pl.col("lift_top_1000").round(1)),
+     pct_cols=["recall_top_10pct", "recall_top_1000", "precision_top_1000"])
+```
+
+::: {.callout-note collapse="true"}
+## Baseline results by cohort
+
+```{python}
+#| label: rfv-by-cohort
+show(baselines.sort("group", "baseline", "cohort").with_columns(pl.col("lift_top_1000").round(1)),
+     pct_cols=["recall_top_10pct", "recall_top_1000", "precision_top_1000"])
+```
+:::
+
+The standard RFV score is clearly weaker than ranking by prior-year total. Averaged over the five cohorts, RFV puts `{python} pct(bl("all eligible", "RFV score", "recall_top_10pct"))` of converters in the top 10% and `{python} pct(bl("all eligible", "RFV score", "recall_top_1000"))` in the top 1,000, while prior-year total puts `{python} pct(bl("all eligible", "prior-year total", "recall_top_10pct"))` and `{python} pct(bl("all eligible", "prior-year total", "recall_top_1000"))` there. For never-major donors the gap is similar (`{python} pct(bl("never major", "RFV score", "recall_top_1000"))` versus `{python} pct(bl("never major", "prior-year total", "recall_top_1000"))` in the top 1,000).
+
+There are two reasons. First, the top value quintile starts at `{python} usd(v5_floor)`, so it lumps the donors who matter most together with many who rarely convert. That matters because the $501 to $750 group that produces most converters is almost all donors who gave exactly $600 (`{python} pct(share_600)` of that group). Second, conversion does not rise steadily with the recency score. Donors with the most recent gifts (score 5) convert at `{python} pct(r_rate[5], 2)`, but the middle scores 3 and 4, which are `{python} pct(r_sust_mid)` monthly sustainers, convert at only `{python} pct(r_rate[3], 3)` and `{python} pct(r_rate[4], 3)`, below even the least recent group (`{python} pct(r_rate[1], 2)`). Adding recency as if more recent were always better pushes many sustainers up the list. Both points suggest the model should use giving amounts directly instead of coarse bins, and should let recency interact with sustainer status instead of treating it as a straight line.
+
+For judging the model, I would use both baselines as planned, but treat prior-year total as the one to beat because it is stronger. Its precision in the top 1,000 averages `{python} pct(bl("all eligible", "prior-year total", "precision_top_1000"))`, about `{python} f'{bl("all eligible", "prior-year total", "lift_top_1000"):.0f}'` times the base rate, which sets a high but fair bar.
+
+### Summary for Modeling
+
+- **Useful features, all measured through FY t:** prior-year total, former major status, years given in the last five, years since first gift, change from the previous year, an upgrade gift in FY t, soft credits before or in FY t, and monthly sustainer status and amount.
+- **Leakage rules:** no soft credits, gift labels, or totals from the outcome years, and no lifetime figures that run past the prediction date.
+- **Baselines:** RFV is weaker than prior-year total alone. The model should be compared with both, and success should be judged against prior-year total.
+- **Sustainers** are a large group with low conversion, so the model should not treat recent monthly giving as a sign of major potential.
+
+## Solicitation History
+
+The campaign members table records who was solicited under which marketing code in each fiscal year, and whether they responded with a payment on that code in the same year. The only campaign attribute that varies is communication method, so the analysis focuses on how much each donor is solicited, how often they respond, and through which channels.
+
+### Solicitation Volume Over Time
+
+```{python}
+#| label: solicitation-volume
+# attach communication method to each solicitation and summarize volume by year and channel
+
+solicit = (
+    cm.join(cc.select("marketing_code", "communication_method"), on="marketing_code", how="left")
+    .with_columns(fy=fiscal_year("campaign_start_date"),
+                  never_donor=pl.col("constituent_id").str.starts_with("SYN-ND"))
+)
+
+sol_by_year = (
+    solicit.group_by("fy")
+    .agg(
+        solicitations=pl.len(),
+        people_solicited=pl.col("constituent_id").n_unique(),
+        never_donors_solicited=pl.col("constituent_id").filter(pl.col("never_donor")).n_unique(),
+        marketing_codes=pl.col("marketing_code").n_unique(),
+        response_rate=pl.col("responded").mean(),
+    )
+    .sort("fy")
+)
+method_share = (
+    solicit.group_by("communication_method").agg(solicitations=pl.len())
+    .with_columns(share=pl.col("solicitations") / pl.col("solicitations").sum())
+    .sort("solicitations", descending=True)
+)
+legacy_method_share = method_share.filter(pl.col("communication_method") == "Legacy")["share"][0]
+s21 = sol_by_year.filter(pl.col("fy") == 2021).row(0, named=True)
+s24 = sol_by_year.filter(pl.col("fy") == 2024).row(0, named=True)
+s25 = sol_by_year.filter(pl.col("fy") == 2025).row(0, named=True)
+s26 = sol_by_year.filter(pl.col("fy") == 2026).row(0, named=True)
+
+show(sol_by_year, pct_cols=["response_rate"])
+```
+
+```{python}
+#| label: method-share
+show(method_share, pct_cols=["share"])
+```
+
+Solicitation grew quickly over the Unite years. PBS Utah solicited `{python} n(s21["people_solicited"])` people in FY2021 and `{python} n(s26["people_solicited"])` in FY2026, and the number of never-donors solicited grew from `{python} n(s21["never_donors_solicited"])` to `{python} n(s26["never_donors_solicited"])`. FY2025 is the exception, with `{python} n(s25["people_solicited"])` people solicited after `{python} n(s24["people_solicited"])` in FY2024. As outreach widened, the response rate per solicitation fell from `{python} pct(s21["response_rate"])` to `{python} pct(s26["response_rate"])`. Because these swings come from PBS Utah's own mailing decisions, a donor's solicitation count partly reflects which lists they were on that year and not only their own behavior.
+
+On communication method, `{python} pct(legacy_method_share)` of solicitation rows have the method "Legacy," a value that is not listed for this field in the reference dictionary, the same as the "Legacy" tender type. It is added to the data concerns at the top. In-person and phone solicitations are rare.
+
+### Solicitation and Conversion
+
+For each eligible donor, I counted solicitations, distinct marketing codes, and responses in FY t, plus whether they received any solicitation by mail, email, digital, phone, or in person. These are joined to the same FY2021 to FY2025 cohorts used in the previous section.
+
+```{python}
+#| label: solicitation-features
+# solicitation counts, responses, and channels per eligible donor in FY t, then banded for comparison
+
+sol_py = solicit.group_by("constituent_id", "fy").agg(
+    solicitations=pl.len(),
+    responses=pl.col("responded").sum(),
+    **{f"by_{m.lower().replace('-', '_')}": (pl.col("communication_method") == m).any()
+       for m in ["Mail", "Email", "Digital", "Phone", "In-Person"]},
+)
+feat_sol = (
+    feat.join(sol_py.rename({"fy": "t"}), on=["constituent_id", "t"], how="left")
+    .with_columns(pl.col("solicitations", "responses").fill_null(0),
+                  pl.col("^by_.*$").fill_null(False))
+)
+share_solicited = (feat_sol["solicitations"] > 0).mean()
+rho_sol_prior = feat_sol.select(pl.corr("solicitations", "prior_total", method="spearman")).item()
+
+SOL_LABELS = ["none", "1 to 5", "6 to 10", "11 to 20", "21 to 40", "over 40"]
+RESP_LABELS = ["none", "1", "2", "3 or more"]
+feat_sol = feat_sol.with_columns(
+    sol_band=pl.col("solicitations").cut([0, 5, 10, 20, 40], labels=SOL_LABELS).cast(pl.Enum(SOL_LABELS)),
+    resp_band=pl.col("responses").cut([0, 1, 2], labels=RESP_LABELS).cast(pl.Enum(RESP_LABELS)),
+    prior_band=pl.col("prior_total").cut([240, 500], labels=["$240 or less", "$241 to $500", "over $500"]),
+)
+
+def rate_table(by):
+    return (
+        feat_sol.group_by(by).agg(eligible=pl.len(), converters=pl.col("converted").sum(),
+                                  median_prior_total=pl.col("prior_total").median())
+        .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+        .sort(by)
+    )
+
+sol_rates = rate_table("sol_band")
+resp_rates = rate_table("resp_band")
+show(sol_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+```{python}
+#| label: response-rates
+show(resp_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+`{python} pct(share_solicited)` of eligible donors were solicited at least once in FY t, so being solicited at all does not separate anyone. The number of solicitations barely matters: conversion stays between `{python} pct(sol_rates["rate"].min(), 2)` and `{python} pct(sol_rates["rate"].max(), 2)` across solicitation bands, and the rank correlation between solicitations and prior-year giving is only `{python} f"{rho_sol_prior:.2f}"`. Responses look more useful at first, since donors who responded to more solicitations convert more often. But their median prior-year giving also rises with the number of responses, so part of that pattern is just giving level showing up again.
+
+The table below checks both features inside bands of prior-year giving, to see whether they add anything once giving is held roughly constant.
+
+```{python}
+#| label: solicitation-within-band
+# conversion by solicitation volume and by responses, inside bands of prior-year giving
+
+within = (
+    feat_sol.group_by("prior_band", "sol_band")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    .sort("prior_band", "sol_band")
+)
+top_within = within.filter((pl.col("prior_band") == "over $500") & (pl.col("sol_band") != "none"))
+resp_within = (
+    feat_sol.group_by("prior_band", "resp_band")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    .sort("prior_band", "resp_band")
+)
+top_resp = resp_within.filter(pl.col("prior_band") == "over $500")
+
+show(within, pct_cols=["rate"], pct_digits=2)
+```
+
+::: {.callout-note collapse="true"}
+## Responses within prior-year giving bands
+
+```{python}
+#| label: responses-within-band
+show(resp_within, pct_cols=["rate"], pct_digits=2)
+```
+:::
+
+Once prior-year giving is held constant, solicitation volume adds little. Among donors who gave over $500 and were solicited at least once, conversion stays between `{python} pct(top_within["rate"].min())` and `{python} pct(top_within["rate"].max())` regardless of how many solicitations they received. In the $241 to $500 band, donors with more than ten solicitations convert a bit more often than those with fewer, but the counts are small. Responses show the same thing: in the over $500 band, donors with no response convert at `{python} pct(top_resp.filter(pl.col("resp_band") == "none")["rate"][0])` and donors with one at `{python} pct(top_resp.filter(pl.col("resp_band") == "1")["rate"][0])`, so the overall response pattern mostly reflects giving level.
+
+### Communication Channel
+
+```{python}
+#| label: channel-rates
+# conversion for donors who did or did not receive each communication channel in FY t
+
+channel_rates = pl.concat([
+    feat_sol.group_by(pl.col(f"by_{c}").alias("received"))
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(channel=pl.lit(label), rate=pl.col("converters") / pl.col("eligible"))
+    for c, label in [("mail", "Mail"), ("email", "Email"), ("digital", "Digital"), ("phone", "Phone"), ("in_person", "In-Person")]
+]).select("channel", "received", "eligible", "converters", "rate").sort("channel", "received")
+inperson_conv = channel_rates.filter((pl.col("channel") == "In-Person") & pl.col("received"))["converters"][0]
+
+show(channel_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+No channel stands out. Donors who received mail, email, digital, or phone solicitations convert at rates close to those who did not, and in-person solicitation, which might be expected to mark major gift prospects, is linked to only `{python} n(inperson_conv)` converters. Channel indicators can go into the model, but I would not expect much from them.
+
+### Solicitations in the Outcome Year
+
+```{python}
+#| label: outcome-year-solicitations
+# average solicitations in FY t and in the outcome year, for converters and non-converters
+
+next_year_sol = sol_py.select("constituent_id", t=pl.col("fy") - 1, next_year_solicitations=pl.col("solicitations"))
+outcome_sol = (
+    feat_sol.join(next_year_sol, on=["constituent_id", "t"], how="left")
+    .with_columns(pl.col("next_year_solicitations").fill_null(0))
+    .group_by("converted")
+    .agg(solicitations_fy_t=pl.col("solicitations").mean(), solicitations_outcome_year=pl.col("next_year_solicitations").mean())
+    .sort("converted")
+)
+osol = {r["converted"]: r for r in outcome_sol.iter_rows(named=True)}
+
+show(outcome_sol)
+```
+
+In FY t, converters and non-converters receive a similar number of solicitations (`{python} f'{osol[True]["solicitations_fy_t"]:.1f}'` versus `{python} f'{osol[False]["solicitations_fy_t"]:.1f}'` on average). In the outcome year the gap opens up: converters receive `{python} f'{osol[True]["solicitations_outcome_year"]:.1f}'` solicitations and non-converters `{python} f'{osol[False]["solicitations_outcome_year"]:.1f}'`. One possible reason is that donors are taken off mass appeals once they give at the major level, though the data does not show why. Either way, solicitation counts from the outcome year depend on the outcome and must not be used as features.
+
+### Summary for Modeling
+
+- Nearly every eligible donor is solicited, and solicitation volume adds little once prior-year giving is known. It also reflects PBS Utah's mailing decisions, which changed a lot from year to year.
+- Responses mostly repeat the giving signal. They can be included, but should not be expected to add much.
+- No communication channel is a strong signal.
+- Solicitations from the outcome year must be excluded, since converters are solicited much less in the year they give at the major level.
+- Because solicitation features add little, the model will lose little if they are left out for the 5 year outcome, where only giving history can be used.
+
+## Passport Viewing
+
+The Passport table summarizes each constituent's streaming by fiscal year and genre: how many distinct titles they watched and the average share of each title they finished. A constituent-year only has rows if something was watched, so a missing year can mean no linked Passport account, no consent to share viewing, or no viewing. I treat a missing year as "no viewing record" and keep a separate flag for it, so the model can tell a missing record apart from light viewing.
+
+### Who Shows Up in the Viewing Data
+
+```{python}
+#| label: passport-coverage
+# viewing summarized per person and year, with the share who gave that year and who view again next year
+
+view_py = pv.group_by("constituent_id", "fiscal_year").agg(
+    titles=pl.col("titles_viewed").sum(),
+    genres=pl.len(),
+    share_watched=(pl.col("mean_percent_watched") * pl.col("titles_viewed")).sum() / pl.col("titles_viewed").sum(),
+    top_genre=pl.col("genre").sort_by("titles_viewed", descending=True).first(),
+).rename({"fiscal_year": "fy"})
+
+donor_years_flag = panel.select("constituent_id", "fy", gave_that_year=pl.lit(True))
+viewer_years = sorted(view_py["fy"].unique().to_list())
+
+def viewer_retention(fy):
+    this_year = view_py.filter(pl.col("fy") == fy)["constituent_id"]
+    next_year = view_py.filter(pl.col("fy") == fy + 1)["constituent_id"]
+    return this_year.is_in(next_year.implode()).mean() if next_year.len() else None
+
+viewers_by_year = (
+    view_py.join(donor_years_flag, on=["constituent_id", "fy"], how="left")
+    .with_columns(pl.col("gave_that_year").fill_null(False),
+                  never_donor=pl.col("constituent_id").str.starts_with("SYN-ND"))
+    .group_by("fy")
+    .agg(viewers=pl.len(), median_titles=pl.col("titles").median(),
+         share_gave_that_year=pl.col("gave_that_year").mean(), share_never_donors=pl.col("never_donor").mean())
+    .sort("fy")
+    .with_columns(viewing_again_next_year=pl.col("fy").map_elements(viewer_retention, return_dtype=pl.Float64))
+)
+vret = viewers_by_year.filter(pl.col("viewing_again_next_year").is_not_null())["viewing_again_next_year"]
+donor_ret_unite = retention_df.filter(pl.col("fy") >= 2021)["retention"]
+v25 = viewers_by_year.filter(pl.col("fy") == 2025).row(0, named=True)
+v26 = viewers_by_year.filter(pl.col("fy") == 2026).row(0, named=True)
+
+show(viewers_by_year, pct_cols=["share_gave_that_year", "share_never_donors", "viewing_again_next_year"])
+```
+
+About 20,000 people have viewing records each year, rising to `{python} n(v26["viewers"])` in FY2026 from `{python} n(v25["viewers"])` in FY2025. Most viewers gave in the same year, which fits Passport being a member benefit, and the share rises to `{python} pct(v26["share_gave_that_year"])` in FY2026. The median viewer watched about `{python} n(viewers_by_year["median_titles"].median())` titles in a year.
+
+The surprising part is how little viewing carries over. Only `{python} pct(vret.min())` to `{python} pct(vret.max())` of one year's viewers have viewing records the next year, while `{python} pct(donor_ret_unite.min())` to `{python} pct(donor_ret_unite.max())` of donors give again the next year. If Passport access comes with membership, I would expect viewing to be at least as persistent as giving. This is listed in the data concerns at the top.
+
+### Viewing and Conversion
+
+```{python}
+#| label: passport-features
+# viewing features for eligible donors in FY t, and conversion by viewing level and genre
+
+ever_viewed = pv.select("constituent_id", "fiscal_year").unique()
+feat_pv = feat.join(view_py.rename({"fy": "t"}), on=["constituent_id", "t"], how="left").with_columns(
+    viewed_fy_t=pl.col("titles").is_not_null(),
+    titles=pl.col("titles").fill_null(0),
+)
+viewed_by_t = (
+    feat_pv.select("constituent_id", "t").join(ever_viewed, on="constituent_id")
+    .filter(pl.col("fiscal_year") <= pl.col("t")).select("constituent_id", "t").unique()
+    .with_columns(viewed_by_t=pl.lit(True))
+)
+feat_pv = feat_pv.join(viewed_by_t, on=["constituent_id", "t"], how="left").with_columns(pl.col("viewed_by_t").fill_null(False))
+
+share_viewed_t = feat_pv["viewed_fy_t"].mean()
+share_viewed_ever = feat_pv["viewed_by_t"].mean()
+rho_titles_prior = feat_pv.filter(pl.col("viewed_fy_t")).select(pl.corr("titles", "prior_total", method="spearman")).item()
+
+TITLE_LABELS = ["no viewing record", "1 to 5", "6 to 15", "16 to 40", "over 40"]
+pv_levels = [
+    ("Viewing record in FY t", pl.when(pl.col("viewed_fy_t")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Titles viewed in FY t", pl.when(~pl.col("viewed_fy_t")).then(pl.lit("no viewing record"))
+        .otherwise(pl.col("titles").cut([5, 15, 40], labels=TITLE_LABELS[1:]).cast(pl.String))),
+    ("Most watched genre", pl.col("top_genre").fill_null("no viewing record")),
+]
+pv_rates = pl.concat([
+    feat_pv.with_columns(level=expr).group_by("level")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(feature=pl.lit(name), rate=pl.col("converters") / pl.col("eligible"))
+    for name, expr in pv_levels
+]).select("feature", "level", "eligible", "converters", "rate").sort("feature", "level")
+
+def pvr(feature, level):
+    return pv_rates.filter((pl.col("feature") == feature) & (pl.col("level") == level)).row(0, named=True)
+
+show(pv_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+`{python} pct(share_viewed_t)` of eligible donors have a viewing record in FY t, and `{python} pct(share_viewed_ever)` have one in some year up to FY t. Viewers convert at `{python} pct(pvr("Viewing record in FY t", "yes")["rate"], 2)`, lower than donors without a viewing record (`{python} pct(pvr("Viewing record in FY t", "no")["rate"], 2)`). Among viewers, heavier viewing goes with somewhat higher conversion, but even the heaviest viewers convert less often than non-viewers. Most genres have too few converters to compare. News and Public Affairs has the highest rate, but it rests on only `{python} n(pvr("Most watched genre", "News and Public Affairs")["converters"])` converters.
+
+Viewing is also almost unrelated to giving. Among eligible donors with a viewing record, the rank correlation between titles viewed and prior-year giving is `{python} f"{rho_titles_prior:.2f}"`. To see whether the lower rate for viewers is about viewing itself or about who views, the table below compares viewers and non-viewers within bands of prior-year giving.
+
+```{python}
+#| label: passport-within-band
+# conversion for viewers and non-viewers inside bands of prior-year giving
+
+pv_within = (
+    feat_pv.with_columns(prior_band=pl.col("prior_total").cut([240, 500], labels=["$240 or less", "$241 to $500", "over $500"]),
+                         viewing=pl.when(pl.col("viewed_fy_t")).then(pl.lit("viewer")).otherwise(pl.lit("no viewing record")))
+    .group_by("prior_band", "viewing")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    .sort("prior_band", "viewing")
+)
+top_pv = {r["viewing"]: r for r in pv_within.filter(pl.col("prior_band") == "over $500").iter_rows(named=True)}
+show(pv_within, pct_cols=["rate"], pct_digits=3)
+```
+
+Within each giving band, viewers and non-viewers convert at similar rates. In the over $500 band the rates are `{python} pct(top_pv["viewer"]["rate"])` for viewers and `{python} pct(top_pv["no viewing record"]["rate"])` for non-viewers. The overall gap comes from who views: only `{python} n(top_pv["viewer"]["eligible"])` of the `{python} n(top_pv["viewer"]["eligible"] + top_pv["no viewing record"]["eligible"])` eligible donors in that top band have a viewing record. So viewing does not seem to add information once giving is known.
+
+### Summary for Modeling
+
+- About half of eligible donors have a viewing record in a given year, so coverage is reasonable, but the missing years cannot be explained from the data. A "no viewing record" flag should go into the model alongside any viewing measures.
+- Viewing shows little relationship with conversion once prior-year giving is held constant, and almost no relationship with giving itself. Passport features may add little, which also means losing them for the 5 year outcome costs little.
+- Viewing data is not persistent from year to year, which is unusual enough to report. If the viewing records turn out to be incomplete and are corrected, the conclusions here could change. Either way, the problem statement's emphasis on viewing behavior should be revisited after modeling.
+
+## Constituent Snapshot Fields
+
+The constituents table has one row per person with fields measured at the end of the data (FY2026). These include PBS classifications (major donor class, annual giving group, sustainer flag), demographics, and three University of Utah dollar fields that the problem statement treats as capacity information. A snapshot field can only be used as a feature if its value at an earlier prediction date would have been the same, or can be rebuilt. The first question is therefore how each field relates to giving in FY2026 and earlier.
+
+### What the Classification Fields Encode
+
+```{python}
+#| label: snapshot-status
+
+# each person's PBS giving status at the snapshot, built from the panel
+status = (
+    con.filter(pl.col("constituent_id").str.starts_with("S0"))
+    .select("constituent_id", "major_donor_class_pbs_utah", "annual_giving_group", "sustainer_pbs_utah",
+            "lifetime_uofu_fundraising", "previous_fy_uofu_cash", "prospect_committed_giving_amount_uofu")
+    .join(panel.filter(pl.col("fy") == 2026).select("constituent_id", total_fy26=pl.col("total"), recurring_fy26=pl.col("recurring_amt")),
+          on="constituent_id", how="left")
+    .join(panel.filter(pl.col("fy") == 2025).select("constituent_id", total_fy25=pl.col("total")), on="constituent_id", how="left")
+    .join(panel.group_by("constituent_id").agg(lifetime_pbs=pl.col("total").sum(),
+                                               major_before_fy26=pl.col("major").filter(pl.col("fy") < 2026).any()),
+          on="constituent_id", how="left")
+    .with_columns(pl.col("total_fy26", "recurring_fy26", "total_fy25", "lifetime_pbs").fill_null(0),
+                  pl.col("major_before_fy26").fill_null(False))
+)
+
+class_decode = (
+    status.group_by(major_donor_class=pl.col("major_donor_class_pbs_utah").fill_null("(blank)"))
+    .agg(constituents=pl.len(),
+         major_in_fy26=(pl.col("total_fy26") >= 1200).mean(),
+         major_before_fy26=pl.col("major_before_fy26").mean(),
+         min_fy26_total=pl.col("total_fy26").min(), max_fy26_total=pl.col("total_fy26").max())
+    .sort("constituents")
+)
+group_decode = (
+    status.group_by("annual_giving_group")
+    .agg(constituents=pl.len(),
+         gave_in_fy26=(pl.col("total_fy26") > 0).mean(),
+         min_fy26_total=pl.col("total_fy26").filter(pl.col("total_fy26") > 0).min(),
+         max_fy26_total=pl.col("total_fy26").filter(pl.col("total_fy26") > 0).max())
+    .sort("min_fy26_total", nulls_last=False)
+)
+sustainer_match = ((status["sustainer_pbs_utah"]) == (status["recurring_fy26"] > 0)).mean()
+
+show(class_decode, pct_cols=["major_in_fy26", "major_before_fy26"])
+```
+
+```{python}
+#| label: group-decode
+show(group_decode, pct_cols=["gave_in_fy26"])
+```
+
+All three PBS classifications can be rebuilt exactly from FY2026 giving:
+
+- **Major donor class.** Broadcaster and Director are exactly the people who gave $1,200 or more in FY2026. Broadcasters gave exactly $1,200, and Directors gave $2,000 or more. Former means major in an earlier year but not in FY2026, and a blank means never major. The documented ranges ($1,000 to $4,999 for Broadcaster and $5,000 to $9,999 for Director) do not match, and the Patron and Lapsed values never appear.
+- **Annual giving group.** The dictionary lists its meaning as unknown, but it lines up with FY2026 giving bands: ND means no gift in FY2026, and PD, LD, SL, and CD are increasing ranges of FY2026 giving, with CD starting at $1,200.
+- **Sustainer flag.** It matches "had recurring payments in FY2026" for `{python} pct(sustainer_match)` of constituents.
+
+Each of these fields describes the final year of the data, so for any earlier prediction date it carries information from the future. For the FY2025 cohort, whose outcome year is FY2026, the major donor class and annual giving group simply are the outcome. All three are dropped as features. The same information can be rebuilt for any year from the giving panel, and the earlier sections already do that with features like former major status and monthly sustainer amount.
+
+### What the University of Utah Fields Encode
+
+The problem statement lists University of Utah capacity information as an input. The three UofU dollar fields were compared with each person's PBS giving.
+
+```{python}
+#| label: uofu-decode
+
+givers = status.filter(pl.col("lifetime_pbs") > 0)
+uofu_checks = pl.DataFrame([
+    {"field": "Lifetime UofU Fundraising", "compared_with": "lifetime PBS giving",
+     "check": "correlation", "value": givers.select(pl.corr("lifetime_uofu_fundraising", "lifetime_pbs")).item()},
+    {"field": "Lifetime UofU Fundraising", "compared_with": "lifetime PBS giving",
+     "check": "share at least as large", "value": (givers["lifetime_uofu_fundraising"] >= givers["lifetime_pbs"]).mean()},
+    {"field": "Previous FY UofU Cash", "compared_with": "FY2025 PBS giving",
+     "check": "share where both are positive or both zero", "value": ((status["previous_fy_uofu_cash"] > 0) == (status["total_fy25"] > 0)).mean()},
+    {"field": "Previous FY UofU Cash", "compared_with": "FY2025 PBS giving",
+     "check": "share exactly equal", "value": (status["previous_fy_uofu_cash"] == status["total_fy25"]).mean()},
+    {"field": "Prospect Committed Giving UofU", "compared_with": "sustainer flag",
+     "check": "share where positive exactly when sustainer", "value": ((status["prospect_committed_giving_amount_uofu"] > 0) == status["sustainer_pbs_utah"]).mean()},
+    {"field": "Prospect Committed Giving UofU", "compared_with": "FY2026 recurring giving",
+     "check": "share exactly equal", "value": (status["prospect_committed_giving_amount_uofu"] == status["recurring_fy26"]).mean()},
+])
+uofu = {(r["field"], r["check"]): r["value"] for r in uofu_checks.iter_rows(named=True)}
+
+# conversion by lifetime UofU amount, to show how strong the leak would look
+feat_uofu = feat.join(con.select("constituent_id", "lifetime_uofu_fundraising"), on="constituent_id", how="left")
+uofu_conv = (
+    feat_uofu.with_columns(band=pl.col("lifetime_uofu_fundraising").cut([1000, 5000], labels=["$1,000 or less", "$1,001 to $5,000", "over $5,000"]))
+    .group_by("band").agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"), share_of_converters=pl.col("converters") / pl.col("converters").sum())
+    .sort("band")
+)
+uofu_top = uofu_conv.filter(pl.col("band") == "over $5,000").row(0, named=True)
+uofu_low = uofu_conv.filter(pl.col("band") == "$1,000 or less").row(0, named=True)
+
+show(uofu_checks.with_columns(value=pl.when(pl.col("check") == "correlation").then(pl.col("value").round(2).cast(pl.String))
+                              .otherwise((pl.col("value") * 100).round(1).cast(pl.String) + "%")))
+```
+
+```{python}
+#| label: uofu-conversion
+show(uofu_conv, pct_cols=["rate", "share_of_converters"], pct_digits=2)
+```
+
+None of the three fields is independent of PBS giving:
+
+- **Lifetime UofU Fundraising** has a correlation of `{python} f'{uofu[("Lifetime UofU Fundraising", "correlation")]:.2f}'` with lifetime PBS giving and is at least as large as lifetime PBS giving for `{python} pct(uofu[("Lifetime UofU Fundraising", "share at least as large")])` of donors. It looks like a total that includes PBS Utah giving through FY2026.
+- **Previous FY UofU Cash** is positive exactly when the person gave to PBS in FY2025 (`{python} pct(uofu[("Previous FY UofU Cash", "share where both are positive or both zero")])` agreement) and equals their FY2025 PBS total for `{python} pct(uofu[("Previous FY UofU Cash", "share exactly equal")])` of constituents.
+- **Prospect Committed Giving** is positive exactly when the sustainer flag is set (`{python} pct(uofu[("Prospect Committed Giving UofU", "share where positive exactly when sustainer")])` agreement) and equals FY2026 recurring giving for `{python} pct(uofu[("Prospect Committed Giving UofU", "share exactly equal")])`.
+
+The lifetime field would look like an excellent predictor: eligible donors with more than $5,000 in lifetime UofU giving convert at `{python} pct(uofu_top["rate"])` and make up `{python} pct(uofu_top["share_of_converters"])` of converters, while those at $1,000 or less `{python} "never convert" if uofu_low["converters"] == 0 else "rarely convert"`. That strength comes from the field counting the outcome years. All three are dropped. This leaves the project without any information on giving capacity outside PBS Utah, which affects the problem statement's inputs and is listed in the data concerns at the top.
+
+### Fields That Can Be Used
+
+The remaining fields describe the person rather than their giving. Age can be shifted back to the prediction date (age in FY t = age in FY2026 minus 2026 + t), assuming the snapshot age is as of FY2026. Gender, state, constituent type, and having a spouse on file are assumed not to change.
+
+```{python}
+#| label: usable-snapshot
+
+feat_demo = feat.join(
+    con.select("constituent_id", "age", "gender", "address_state", "primary_constituent_type", "spouse_constituent_id"),
+    on="constituent_id", how="left",
+).with_columns(
+    age_at_t=pl.col("age") - (2026 - pl.col("t")),
+    utah=pl.col("address_state") == "UT",
+    has_spouse=pl.col("spouse_constituent_id").is_not_null(),
+)
+AGE_LABELS = ["under 41", "41 to 55", "56 to 70", "71 to 85", "over 85"]
+demo_specs = [
+    ("Age at prediction date", pl.col("age_at_t").cut([40, 55, 70, 85], labels=AGE_LABELS).cast(pl.String)),
+    ("Gender", pl.col("gender")),
+    ("Lives in Utah", pl.when(pl.col("utah")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Spouse on file", pl.when(pl.col("has_spouse")).then(pl.lit("yes")).otherwise(pl.lit("no"))),
+    ("Constituent type", pl.col("primary_constituent_type")),
+]
+demo_rates = pl.concat([
+    feat_demo.with_columns(level=expr).group_by("level")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(feature=pl.lit(name), rate=pl.col("converters") / pl.col("eligible"))
+    for name, expr in demo_specs
+]).filter(pl.col("eligible") >= 500).select("feature", "level", "eligible", "converters", "rate").sort("feature", "level")
+
+def dr(feature, level):
+    return demo_rates.filter((pl.col("feature") == feature) & (pl.col("level") == level))["rate"][0]
+
+# does age still matter once prior-year giving is held constant?
+age_within = (
+    feat_demo.filter(pl.col("prior_total") > 500)
+    .group_by(age_71_plus=pl.col("age_at_t") > 70)
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    .sort("age_71_plus")
+)
+aw = {r["age_71_plus"]: r["rate"] for r in age_within.iter_rows(named=True)}
+
+# constituent type versus giving tenure
+type_tenure = feat_demo.group_by("primary_constituent_type").agg(median_tenure=pl.col("tenure_years").median())
+tt = dict(zip(type_tenure["primary_constituent_type"], type_tenure["median_tenure"]))
+
+show(demo_rates, pct_cols=["rate"], pct_digits=3)
+```
+
+Levels with fewer than 500 eligible donor-years are left out of the table.
+
+- **Age** has a clear pattern. Donors over 70 at the prediction date convert at about `{python} pct(dr("Age at prediction date", "71 to 85"), 2)`, compared with `{python} pct(dr("Age at prediction date", "under 41"), 2)` for donors 40 and under. The pattern holds among donors who gave over $500 in FY t (`{python} pct(aw[True])` for those over 70 versus `{python} pct(aw[False])` for younger donors), so age adds something beyond giving level.
+- **Gender** matters mainly through the "Unknown" group, which converts at `{python} pct(dr("Gender", "Unknown"), 3)`, about a third of the rate for women and men. Unknown gender may mark thinner records, in which case it is more a data completeness signal than a demographic one.
+- **State and spouse** make little difference.
+- **Constituent type** shows "Friends" converting more often than "Donors" (`{python} pct(dr("Constituent type", "Friends"), 3)` versus `{python} pct(dr("Constituent type", "Donors"), 3)`). The type also tracks giving tenure (median `{python} n(tt["Friends"])` years for Friends and `{python} n(tt["Donors"])` for Donors), so it may be a snapshot label that changed over time. Whether to use it is a decision for the modeling plan.
+
+### Summary for Modeling
+
+- **Drop:** major donor class, annual giving group, sustainer flag, and all three UofU dollar fields. Each is rebuilt from giving through FY2026 and would leak the outcome.
+- **Use:** age shifted to the prediction date, gender (with "Unknown" as its own level), and, with less expected value, state and spouse on file.
+- **Decide:** constituent type, which may encode tenure or a label that changed after the prediction date.
+- There is no usable outside measure of giving capacity, so the model has to rely on PBS giving history.
+
+## Cultivation Program
+
+From FY2022 to FY2025, each of eight officer portfolios selected 125 donors a year for possible cultivation. Within each portfolio, about three quarters of the selected donors were assigned for contact and the rest were randomly held out. The portfolios also adopted a cultivation program at different times. This setup matters for two reasons: contact may change who becomes a major donor, which affects the outcome the model learns from, and the random holdout gives a fair way to measure that effect.
+
+### How the Program Was Run
+
+```{python}
+#| label: cultivation-setup
+
+cult = (
+    cu.rename({"synthetic_id": "constituent_id", "fiscal_year": "t"})
+    .join(op.select("portfolio_id", "rollout_fy"), on="portfolio_id", how="left")
+)
+cult_summary = (
+    cult.group_by("t")
+    .agg(selected=pl.len(), contacted=pl.col("contacted").sum(), held_out=pl.col("holdout").sum(),
+         in_adopting_portfolios=pl.col("program_adopted").sum())
+    .sort("t")
+)
+adoption_matches_rollout = (cult["program_adopted"] == (cult["t"] >= cult["rollout_fy"].fill_null(9999))).mean()
+times_selected = cult.group_by("constituent_id").agg(times=pl.len())["times"].value_counts().sort("times")
+selected_once = times_selected.filter(pl.col("times") == 1)["count"][0]
+selected_people = cult["constituent_id"].n_unique()
+
+# timing: giving in the assignment year itself
+cult_year = cult.join(panel.select("constituent_id", t=pl.col("fy"), total_t=pl.col("total")), on=["constituent_id", "t"], how="left")
+gave_in_assignment_year = (cult_year["total_t"].fill_null(0) > 0).mean()
+major_in_assignment_year = (cult_year["total_t"].fill_null(0) >= 1200).mean()
+
+show(cult_summary)
+```
+
+Each year 1,000 donors were selected, and the share assigned for contact is the same in every portfolio. Program adoption follows the rollout year in the officer table exactly (`{python} pct(adoption_matches_rollout)` agreement), so two portfolios adopted in FY2023, two in FY2024, and two in FY2025, while the last two had not adopted by the end of the program. Over the four years `{python} n(selected_people)` different people were selected, and `{python} n(selected_once)` of them only once.
+
+The timing lines up with the cohorts used in this notebook. `{python} pct(gave_in_assignment_year)` of selected donors gave in their assignment year and `{python} pct(major_in_assignment_year)` were major donors that year, so a donor assigned in FY t is an eligible, non-major donor at the end of FY t, and the outcome of interest is whether they become major in FY t+1. The rest of this section matches each assignment year to the cohort with the same t.
+
+### Who Gets Selected
+
+```{python}
+#| label: cultivation-selection
+# match cultivation assignments to cohorts and compare selected, held-out, and non-selected donors
+
+cult_cohorts = (
+    feat.filter(pl.col("t").is_between(2022, 2025))
+    .join(cult.select("constituent_id", "t", "contacted", "program_adopted"), on=["constituent_id", "t"], how="left")
+    .with_columns(
+        group=pl.when(pl.col("contacted").is_null()).then(pl.lit("not selected"))
+        .when(pl.col("contacted")).then(pl.lit("selected, contacted"))
+        .otherwise(pl.lit("selected, held out")),
+        prior_rank=pl.col("prior_total").rank(descending=True).over("t") / pl.len().over("t"),
+    )
+)
+selected_share_of_eligible = cult_cohorts["contacted"].is_not_null().mean()
+selected_in_eligible = cult.join(cult_cohorts.select("constituent_id", "t"), on=["constituent_id", "t"], how="semi").height / cult.height
+median_rank_selected = cult_cohorts.filter(pl.col("contacted").is_not_null())["prior_rank"].median()
+
+selection_profile = (
+    cult_cohorts.group_by("group")
+    .agg(
+        donor_years=pl.len(),
+        median_prior_total=pl.col("prior_total").median(),
+        former_major=pl.col("former_major").mean(),
+        gave_5_of_5_years=(pl.col("years_last5") == 5).mean(),
+        soft_credit_before=pl.col("soft_before").mean(),
+        upgrade_gift=pl.col("upgrade_gift").mean(),
+        converted_next_year=pl.col("converted").mean(),
+    )
+    .sort("group")
+)
+show(selection_profile, pct_cols=["former_major", "gave_5_of_5_years", "soft_credit_before", "upgrade_gift", "converted_next_year"], pct_digits=2)
+```
+
+Selection draws almost entirely from the eligible population (`{python} pct(selected_in_eligible)` of selected donors are eligible in their cohort) and covers about `{python} pct(selected_share_of_eligible)` of it each year. Officers pick from the top of the giving distribution: the median selected donor ranks in the top `{python} pct(median_rank_selected)` of eligible donors by prior-year giving. Compared with donors who were not selected, they are much more likely to be former major donors, to have given in all of the last five years, to have a past soft credit, and to have made an upgrade gift, which are the same signals found in the giving behavior section. The contacted and held-out groups look alike on all of these measures, which is what random assignment should produce.
+
+### Effect of Contact
+
+The held-out donors were selected in the same way as the contacted donors but were not contacted, so comparing the two groups estimates what contact itself does.
+
+```{python}
+#| label: contact-effect
+# difference in 12 month conversion between contacted and held-out donors, with a normal-approximation 95% interval
+
+import math
+
+def effect_row(label, df):
+    treated = df.filter(pl.col("contacted") == True)
+    control = df.filter(pl.col("contacted") == False)
+    p1, n1 = treated["converted"].mean(), treated.height
+    p0, n0 = control["converted"].mean(), control.height
+    se = math.sqrt(p1 * (1 - p1) / n1 + p0 * (1 - p0) / n0)
+    diff = p1 - p0
+    return {"group": label, "contacted": n1, "contacted_rate": p1, "held_out": n0, "held_out_rate": p0,
+            "difference": diff, "ci_low": diff - 1.96 * se, "ci_high": diff + 1.96 * se}
+
+selected_only = cult_cohorts.filter(pl.col("contacted").is_not_null())
+effects = pl.DataFrame([
+    effect_row("all selected donors", selected_only),
+    effect_row("portfolios that had adopted the program", selected_only.filter(pl.col("program_adopted"))),
+    effect_row("portfolios that had not adopted", selected_only.filter(~pl.col("program_adopted"))),
+    effect_row("never-major donors only", selected_only.filter(~pl.col("former_major"))),
+])
+eff = {r["group"]: r for r in effects.iter_rows(named=True)}
+show(effects, pct_cols=["contacted_rate", "held_out_rate", "difference", "ci_low", "ci_high"], pct_digits=2)
+```
+
+Contact roughly doubles the chance of becoming a major donor the next year: `{python} pct(eff["all selected donors"]["contacted_rate"], 2)` for contacted donors versus `{python} pct(eff["all selected donors"]["held_out_rate"], 2)` for held-out donors, a difference of `{python} pp(eff["all selected donors"]["difference"])` percentage points (95% interval `{python} pp(eff["all selected donors"]["ci_low"])` to `{python} pp(eff["all selected donors"]["ci_high"])`). The effect holds for never-major donors, who convert at `{python} pct(eff["never-major donors only"]["contacted_rate"], 2)` when contacted and `{python} pct(eff["never-major donors only"]["held_out_rate"], 2)` when held out. It is concentrated in portfolios that had adopted the program, where the difference is `{python} pp(eff["portfolios that had adopted the program"]["difference"])` points. In portfolios that had not adopted it, the difference is `{python} pp(eff["portfolios that had not adopted"]["difference"])` points and the interval includes zero. These groups are small, so the program comparison is suggestive rather than settled, but contact itself clearly matters.
+
+### How Much Conversion Runs Through the Program
+
+```{python}
+#| label: cultivation-share
+
+def program_share(t):
+    new_next = (
+        panel.filter((pl.col("fy") == t + 1) & pl.col("major"))
+        .join(panel.filter((pl.col("fy") == t) & pl.col("major")), on="constituent_id", how="anti")
+    )
+    sel = cult.filter(pl.col("t") == t)
+    return {
+        "cohort": t,
+        "new_majors_next_year": new_next.height,
+        "selected_in_fy_t": new_next.join(sel, on="constituent_id", how="semi").height,
+        "contacted_in_fy_t": new_next.join(sel.filter(pl.col("contacted")), on="constituent_id", how="semi").height,
+    }
+
+program_shares = pl.DataFrame([program_share(t) for t in range(2022, 2026)])
+ps_tot = program_shares.select(pl.exclude("cohort").sum()).row(0, named=True)
+
+# within prior-giving bands: contacted, held out, and not selected
+band_groups = (
+    cult_cohorts.with_columns(prior_band=pl.col("prior_total").cut([240, 500], labels=["$240 or less", "$241 to $500", "over $500"]))
+    .group_by("prior_band", "group")
+    .agg(donor_years=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("donor_years"))
+    .sort("prior_band", "group")
+)
+bg = {(r["prior_band"], r["group"]): r["rate"] for r in band_groups.iter_rows(named=True)}
+
+# share of cohort converters who were contacted
+contacted_conv_share = (
+    cult_cohorts.filter(pl.col("group") == "selected, contacted")["converted"].sum() / cult_cohorts["converted"].sum()
+)
+
+# rough count of conversions attributable to contact
+contact_attrib = ps_tot["contacted_in_fy_t"] * (1 - eff["all selected donors"]["held_out_rate"] / eff["all selected donors"]["contacted_rate"])
+
+show(program_shares)
+```
+
+```{python}
+#| label: cultivation-bands
+show(band_groups, pct_cols=["rate"], pct_digits=2)
+```
+
+Of the `{python} n(ps_tot["new_majors_next_year"])` new major donors from FY2023 to FY2026, `{python} n(ps_tot["selected_in_fy_t"])` (`{python} pct(ps_tot["selected_in_fy_t"] / ps_tot["new_majors_next_year"])`) had been selected for cultivation the year before and `{python} n(ps_tot["contacted_in_fy_t"])` had been contacted. Using the held-out rate as what would have happened without contact, roughly `{python} n(contact_attrib)` of those contacted conversions can be credited to contact itself. That is a rough figure, but it means a meaningful share of the outcomes in these years were produced by staff action.
+
+The band table also shows that officers select well. Among donors who gave over $500, held-out donors who were never contacted still convert at `{python} pct(bg[("over $500", "selected, held out")])`, compared with `{python} pct(bg[("over $500", "not selected")])` for donors in the same band who were not selected. Officers are using more than prior-year giving amount when they choose. The selection profile table suggests what: the selected donors stand out on former major status, giving consistency, past soft credits, and upgrade gifts, all of which are available to a model.
+
+### What This Means for Modeling
+
+- **The outcome is partly caused by contact.** For cohorts FY2022 to FY2025, a model trained without knowing who was contacted will learn to imitate officer selection plus the effect of contact. The ranking measures from earlier sections, including the prior-year giving baseline, are inflated for these cohorts for the same reason.
+- **Officer selection is the real benchmark.** Staff already pick a list of about 1,000 that includes `{python} pct(ps_tot["selected_in_fy_t"] / ps_tot["new_majors_next_year"], 0)` of the next year's new major donors, though part of that comes from contact itself. The held-out donors show how well that selection does without the boost from contact, which makes a fair comparison for the model.
+- **Contact works.** The program raises conversion, which supports the project's premise that a better list leads to more major donors. It also suggests a later extension: modeling which donors respond most to contact (uplift), not only who is likely to convert.
+- **How contacted donors are handled.** The plan is to add two training-only flags, "contacted in FY t" and "selected but held out in FY t," so the model can separate the effect of contact from donor potential. Future lists are then scored with both flags set to "not selected," so every donor is ranked on their own potential. Results will be reported for all eligible donors and for donors who were not contacted. Dropping contacted donors was ruled out because they include `{python} pct(contacted_conv_share, 0)` of the converters in the FY2022 to FY2025 cohorts.
+
+## The FY2026 Influx
+
+Federal funding for public broadcasting ended in 2025, and FY2026 (July 2025 to June 2026) is the first full year after that. The problem statement names the recent donation influx as a risk because it could make the last year look different from the years a model learns from. This section describes what changed in FY2026, checks whether the rise in conversion comes from the influx or from the cultivation program, which reached its widest coverage at the same time, and compares key results with and without the last year.
+
+### What Changed in FY2026
+
+```{python}
+#| label: influx-donors
+# classify each donor-year as a first gift, a repeat from last year, or a return after a gap
+
+donor_kind = (
+    panel.filter(pl.col("fy") >= 2020)
+    .join(first_gift_fy, on="constituent_id")
+    .sort("constituent_id", "fy")
+    .with_columns(prev_fy=pl.col("fy").shift(1).over("constituent_id"),
+                  prev_total=pl.col("total").shift(1).over("constituent_id"))
+    .filter(pl.col("fy") >= 2021)
+    .with_columns(kind=pl.when(pl.col("first_fy") == pl.col("fy")).then(pl.lit("first gift"))
+                  .when(pl.col("prev_fy") == pl.col("fy") - 1).then(pl.lit("gave last year"))
+                  .otherwise(pl.lit("returning after a gap")))
+)
+kind_by_year = (
+    donor_kind.group_by("fy", "kind")
+    .agg(donors=pl.len(), revenue=pl.col("total").sum(), median_gift=pl.col("total").median())
+    .sort("fy", "kind")
+)
+retained_change = (
+    donor_kind.filter(pl.col("kind") == "gave last year")
+    .group_by("fy")
+    .agg(donors=pl.len(),
+         gave_more=(pl.col("total") > pl.col("prev_total")).mean(),
+         gave_less=(pl.col("total") < pl.col("prev_total")).mean(),
+         net_change=(pl.col("total") - pl.col("prev_total")).sum())
+    .sort("fy")
+)
+kb = {(r["fy"], r["kind"]): r for r in kind_by_year.iter_rows(named=True)}
+rc = {r["fy"]: r for r in retained_change.iter_rows(named=True)}
+rc_before = retained_change.filter(pl.col("fy") < 2026)
+
+show(kind_by_year)
+```
+
+```{python}
+#| label: influx-retained
+show(retained_change, pct_cols=["gave_more", "gave_less"])
+```
+
+The influx shows up in three places:
+
+- **First-time donors nearly doubled,** from `{python} n(kb[(2025, "first gift")]["donors"])` in FY2025 to `{python} n(kb[(2026, "first gift")]["donors"])` in FY2026. Their median gift stayed at `{python} usd(kb[(2026, "first gift")]["median_gift"])`, so these are more donors of the usual kind, not larger first gifts.
+- **Existing donors gave more.** Among donors who also gave the year before, `{python} pct(rc[2026]["gave_more"])` increased their giving in FY2026, compared with `{python} pct(rc_before["gave_more"].min())` to `{python} pct(rc_before["gave_more"].max())` in earlier years. Their net change was `{python} usd(rc[2026]["net_change"])`, after being negative in every earlier Unite year.
+- **More lapsed donors came back** (`{python} n(kb[(2026, "returning after a gap")]["donors"])`, up from `{python} n(kb[(2025, "returning after a gap")]["donors"])`).
+
+### Conversion in FY2026: Influx or Program?
+
+The FY2025 cohort, whose conversions happen in FY2026, has the highest 12 month conversion rate of the recent cohorts. That same cohort is also the one with the most portfolios using the cultivation program, so the rise could come from either source. The held-out donors help separate them, since they were selected but never contacted.
+
+```{python}
+#| label: influx-vs-program
+# conversion by cohort for contacted, held-out, and non-selected donors
+
+by_group_year = (
+    cult_cohorts.group_by("t", "group")
+    .agg(donor_years=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("donor_years"))
+    .sort("t", "group")
+)
+gy = {(r["t"], r["group"]): r["rate"] for r in by_group_year.iter_rows(named=True)}
+held_before = [gy[(t, "selected, held out")] for t in (2022, 2023, 2024)]
+contacted_before = [gy[(t, "selected, contacted")] for t in (2022, 2023, 2024)]
+
+show(by_group_year, pct_cols=["rate"], pct_digits=2)
+```
+
+Conversion rose in FY2026 among held-out donors as well as contacted donors. Held-out donors converted at `{python} pct(gy[(2025, "selected, held out")], 2)` in the FY2025 cohort, compared with `{python} pct(min(held_before), 2)` to `{python} pct(max(held_before), 2)` in the three earlier cohorts, and contacted donors at `{python} pct(gy[(2025, "selected, contacted")], 2)` compared with `{python} pct(min(contacted_before), 2)` to `{python} pct(max(contacted_before), 2)`. Because the held-out donors were never contacted, their rise cannot come from contact, so at least part of the FY2026 jump reflects donors' own response to the funding cut. The counts are small (the held-out group has about 250 donors a year), so this is a direction and not a precise estimate.
+
+### New Major Donors in FY2026
+
+```{python}
+#| label: influx-new-majors
+
+def new_major_tiers(fy):
+    new = (
+        panel.filter((pl.col("fy") == fy) & pl.col("major"))
+        .join(panel.filter((pl.col("fy") == fy - 1) & pl.col("major")), on="constituent_id", how="anti")
+    )
+    return new.group_by("tier").agg(new_majors=pl.len()).with_columns(fy=pl.lit(fy))
+
+new_tiers = (
+    pl.concat([new_major_tiers(fy) for fy in range(2022, LAST_FY + 1)])
+    .with_columns(pl.col("tier").cast(pl.String))
+    .pivot(on="tier", index="fy", values="new_majors")
+    .fill_null(0)
+    .sort("fy")
+)
+# keep tiers in order and add a total
+new_tiers = (
+    new_tiers.select("fy", *[t for t in TIER_LABELS[1:] if t in new_tiers.columns])
+    .with_columns(total=pl.sum_horizontal(pl.exclude("fy")))
+)
+nt = {r["fy"]: r for r in new_tiers.iter_rows(named=True)}
+nt_before = new_tiers.filter(pl.col("fy") < 2026)
+
+show(new_tiers)
+```
+
+FY2026 produced `{python} n(nt[2026]["total"])` new major donors, compared with `{python} n(nt_before["total"].min())` to `{python} n(nt_before["total"].max())` in earlier Unite years. The increase is largest at the $2,000 tier (`{python} n(nt[2026]["$2,000"])`, compared with at most `{python} n(nt_before["$2,000"].max())` before).
+
+### Results With and Without the Last Year
+
+```{python}
+#| label: influx-sensitivity
+
+c12 = cohorts.filter((pl.col("window") == 1) & (pl.col("t") >= 2021))
+rate_with = c12["converted"].mean()
+rate_without = c12.filter(pl.col("t") < 2025)["converted"].mean()
+
+rec_with = rec12.select(pl.col("recall_top_10pct", "recall_top_1000").mean()).row(0, named=True)
+rec_without = rec12.filter(pl.col("cohort") < 2025).select(pl.col("recall_top_10pct", "recall_top_1000").mean()).row(0, named=True)
+
+sensitivity = pl.DataFrame([
+    {"measure": "12 month conversion rate, pooled", "with_FY2025_cohort": rate_with, "without_FY2025_cohort": rate_without},
+    {"measure": "Prior-year ranking, recall in top 10%", "with_FY2025_cohort": rec_with["recall_top_10pct"], "without_FY2025_cohort": rec_without["recall_top_10pct"]},
+    {"measure": "Prior-year ranking, recall in top 1,000", "with_FY2025_cohort": rec_with["recall_top_1000"], "without_FY2025_cohort": rec_without["recall_top_1000"]},
+])
+
+# first-year donors in the next list to be scored (the FY2026 cohort)
+fy26_eligible = panel.filter((pl.col("fy") == 2026) & ~pl.col("major")).join(first_gift_fy, on="constituent_id")
+fy26_first_year_share = (fy26_eligible["first_fy"] == 2026).mean()
+first_year_rate = sig("Years since first gift", "1")
+
+show(sensitivity, pct_cols=["with_FY2025_cohort", "without_FY2025_cohort"], pct_digits=3)
+```
+
+Leaving out the last cohort lowers the pooled 12 month conversion rate from `{python} pct(rate_with, 3)` to `{python} pct(rate_without, 3)`, but it barely changes how well the prior-year ranking works. So the influx raised the level of conversion more than it changed who converts. For modeling, this suggests two checks: train on cohorts through FY2024 and test on FY2025 to see whether a model built before the funding cut still ranks well afterward, and report the main results with and without the FY2025 cohort, as the problem statement plans.
+
+It also matters for the first list the model will produce. The FY2026 cohort is the one PBS Utah would score next, and `{python} pct(fy26_first_year_share)` of its eligible donors made their first gift in FY2026. First-year donors converted at only `{python} pct(first_year_rate, 3)` in earlier cohorts, so the influx makes the eligible pool bigger without adding many likely converters, unless donors who joined because of the funding cut behave differently, which cannot be known yet.
+
+### Summary for Modeling
+
+- FY2026 brought more first-time donors, more returning donors, and higher giving from existing donors.
+- Conversion rose among held-out donors who were never contacted, so the rise is at least partly the donors' own response to the funding cut, not only the cultivation program.
+- The influx raised the conversion rate but did not change which donors convert in a way the simple ranking can detect.
+- Results should be reported with and without the FY2025 cohort, and a "train before, test after" split should check whether a model holds up across the funding cut.
+
+## Spouses
+
+The README asks that training and test data be split by donor with spouses kept together, so that one spouse's information cannot leak into the other's prediction. This section checks how many eligible donors have a spouse on file and whether spouses' giving is connected.
+
+```{python}
+#| label: spouses
+
+spouse_map = con.filter(pl.col("spouse_constituent_id").is_not_null()).select("constituent_id", spouse=pl.col("spouse_constituent_id"))
+pairs = spouse_map.height // 2
+
+c12_sp = c12.join(spouse_map, on="constituent_id", how="left")
+eligible_with_spouse = c12_sp["spouse"].is_not_null().mean()
+with_sp = c12_sp.filter(pl.col("spouse").is_not_null())
+spouse_also_eligible = with_sp.join(c12.select(spouse=pl.col("constituent_id"), t=pl.col("t")), on=["spouse", "t"], how="semi").height / with_sp.height
+
+# spouse's giving in FY t and conversion
+spouse_year = panel.select(spouse=pl.col("constituent_id"), t=pl.col("fy"), spouse_total=pl.col("total"))
+spouse_conv = (
+    with_sp.join(spouse_year, on=["spouse", "t"], how="left")
+    .with_columns(spouse_gave=pl.col("spouse_total").is_not_null())
+    .group_by("spouse_gave")
+    .agg(eligible=pl.len(), converters=pl.col("converted").sum())
+    .with_columns(rate=pl.col("converters") / pl.col("eligible"))
+    .sort("spouse_gave")
+)
+
+# giving together in the same year
+same_year = (
+    panel.filter(pl.col("fy") >= 2021).join(spouse_map, on="constituent_id")
+    .join(spouse_year.rename({"t": "fy"}), on=["spouse", "fy"], how="left")
+)
+both_gave_share = same_year["spouse_total"].is_not_null().mean()
+spouse_corr = same_year.filter(pl.col("spouse_total").is_not_null()).select(pl.corr("total", "spouse_total", method="spearman")).item()
+major_years_with_spouse = (
+    panel.filter(pl.col("major")).join(spouse_map, on="constituent_id")
+    .join(panel.filter(pl.col("major")).select(spouse=pl.col("constituent_id"), fy=pl.col("fy"), spouse_major=pl.lit(True)), on=["spouse", "fy"], how="left")
+)
+major_with_spouse_n = major_years_with_spouse.height
+both_major_n = major_years_with_spouse["spouse_major"].fill_null(False).sum()
+
+show(spouse_conv, pct_cols=["rate"], pct_digits=3)
+```
+
+There are `{python} n(pairs)` spouse pairs. `{python} pct(eligible_with_spouse)` of eligible donor-years belong to someone with a spouse on file, and in `{python} pct(spouse_also_eligible)` of those the spouse is also eligible in the same cohort, so splitting by household affects a small part of the data. Spouses' giving looks unconnected: both spouses gave in only `{python} pct(both_gave_share)` of years in which one of them gave, the rank correlation between their annual totals is `{python} f"{spouse_corr:.2f}"`, and in `{python} "none" if both_major_n == 0 else n(both_major_n)` of the `{python} n(major_with_spouse_n)` major donor-years with a spouse on file was the spouse also a major donor that year. Whether a donor's spouse gave in FY t also makes little difference to conversion.
+
+Part of this is by design, since each soft credit goes to only one spouse, so a joint gift shows up under one person. Even so, couples usually give in similar ways, and the lack of any connection is listed in the data concerns at the top. For modeling, spouse features are unlikely to help, and keeping spouses together in validation splits is still the safe choice, but the risk of leakage between spouses looks small.
+
+## Key Findings and Modeling Implications
+
+### Answers to the Analytic Questions
+
+The introduction listed ten questions. Here are the short answers.
+
+1. **How common are major donors?** About `{python} n(recent["major_donors"].mean())` people a year give $1,200 or more, which is `{python} pct(pooled_recent["donors"], 2)` of donors, and they give `{python} pct(pooled_recent["revenue"])` of donor revenue (FY2021 to FY2026). This is well below the problem statement's 1% and 19%.
+2. **How often do non-major donors convert?** `{python} pct(r12["rate"], 2)` within 12 months, `{python} pct(r3["rate"], 2)` within 3 years, and `{python} pct(r5["rate"], 2)` within 5 years, or about `{python} n(recent_12["converters"].mean())` converters a year out of roughly `{python} n(round(recent_12["eligible"].mean(), -3))` eligible donors. Former major donors convert at `{python} pct(r12_former["rate"])` and make up `{python} pct(r12_former["converters"] / r12["converters"], 0)` of 12 month converters.
+3. **Which tiers do converters reach?** `{python} n(tier_conv.get("$1,200", 0))` of `{python} n(r12["converters"])` 12 month converters reach $1,200, `{python} n(tier_conv.get("$2,000", 0))` reach $2,000, and only `{python} n(conv_top)` reach $5,000 or more.
+4. **How many backtest cohorts are there?** With solicitation and Passport features, 5 cohorts for 12 months, 3 for 3 years, and 1 for 5 years. With giving history alone, more than 20 for each window.
+5. **Who is eligible?** Donors who gave in FY t and gave under $1,200. This group covers `{python} pct(src_recent["gave_last_year"] / src_recent["new_majors"], 0)` of each year's new major donors.
+6. **Which giving patterns come before conversion?** Prior-year giving (especially the group giving about $600), former major status, giving every year, long tenure, an upgrade gift, giving more than the year before, and a soft credit in an earlier year. Monthly sustainers convert less often.
+7. **Do solicitation, Passport, or UofU fields help?** Solicitation and Passport add little once prior-year giving is known. The UofU fields are built from PBS giving and leak the outcome.
+8. **How different is FY2026?** More first-time donors, more returning donors, and higher giving from existing donors. Conversion rose, partly on its own and partly through the cultivation program, but the ranking of who converts did not change.
+9. **Does the cultivation program matter?** Yes. Contact roughly doubles conversion (`{python} pct(eff["all selected donors"]["contacted_rate"], 2)` versus `{python} pct(eff["all selected donors"]["held_out_rate"], 2)`), and `{python} pct(ps_tot["selected_in_fy_t"] / ps_tot["new_majors_next_year"], 0)` of new major donors from FY2023 to FY2026 had been selected the year before.
+10. **Do spouses matter?** About `{python} pct(eligible_with_spouse, 0)` of eligible donor-years have a spouse on file, and spouses' giving is unconnected, so they matter mainly for how validation splits are drawn.
+
+### Recommendations for the Modeling Phase
+
+**Target and population**
+
+- Outcome: individual fiscal-year giving of $1,200 or more, counting the person's own payments plus soft credits, excluding organization payments and duplicate records.
+- Eligible donors: gave in FY t and under $1,200 that year, scored at the end of FY t.
+- Report results for all eligible donors and for never-major donors separately.
+- Tier prediction with three levels: $1,200, $2,000, and $5,000 and up.
+
+**Features**
+
+- Use: prior-year total and amounts from earlier years, former major status, years given in the last five, years since first gift, change from the previous year, upgrade and additional gifts in FY t, soft credits through FY t, monthly sustainer status and amount, recency (allowing it to interact with sustainer status), age shifted to FY t, and gender with "Unknown" kept as its own level.
+- Optional, expected to add little: solicitation counts and responses, communication channels, Passport viewing with a "no viewing record" flag, state, spouse on file.
+- Test separately: constituent type.
+- Training-only controls: contacted and held-out flags from the cultivation program, set to "not selected" when scoring.
+- Exclude: major donor class, annual giving group, sustainer flag, the three UofU fields, tender type, and anything measured after the prediction date, including soft credits, solicitations, and gift labels from the outcome years.
+
+**Validation**
+
+- Split by time, with each cohort as a unit, and keep spouses in the same fold.
+- Check a "train through FY2024, test on FY2025" split and report results with and without the FY2025 cohort.
+- Backtest the 12 month and 3 year outcomes with all features. Check the 5 year outcome with giving history only.
+- With about `{python} n(recent_12["converters"].mean())` converters a year, use ranking measures (recall, precision, and lift at a fixed list size) and expect year to year noise. Legacy-era cohorts can add training examples for giving-only models.
+
+**Baselines**
+
+- Prior-year giving ranking: the strongest simple baseline (`{python} pct(bl("all eligible", "prior-year total", "recall_top_1000"))` recall in the top 1,000 on average, `{python} pct(bl("never major", "prior-year total", "recall_top_1000"))` for never-major donors). These figures are inflated for the FY2022 to FY2025 cohorts by the effect of contact, so they should be recalculated on donors who were not contacted.
+- RFV score: weaker (`{python} pct(bl("all eligible", "RFV score", "recall_top_1000"))` in the top 1,000) but reported because the problem statement promises it.
+- Officer selection: measured on held-out donors, who convert at `{python} pct(eff["all selected donors"]["held_out_rate"], 2)` without contact.
+
+## Revisions to the Business Problem Statement
+
+The team planned to revise the business problem statement after the EDA. The proposals below are drafts for that discussion. Each one names the part of the statement it affects, the suggested change, and the evidence behind it.
+
+1. **Major donor figures (Business Problem).** The statement says major donors are about 1% of donors and give about 19% of revenue. In the data they are `{python} pct(pooled_recent["donors"], 2)` of donors and give `{python} pct(pooled_recent["revenue"])` of revenue, and none of the alternative definitions tested (a $1,000 threshold or combining spouses) closes the gap. *Proposal:* cite the 1% and 19% figures as PBS Utah's own reporting, or replace them with the figures from the data, and explain the difference if known.
+
+2. **Recall target (Success Metrics).** A ranking by prior-year giving alone puts `{python} pct(rec12["recall_top_10pct"].min(), 0)` to `{python} pct(rec12["recall_top_10pct"].max(), 0)` of 12 month converters in the top 10%, so the 25% target is met without a model. *Proposal:* define success as beating the prior-year giving baseline, overall and for never-major donors, and set the size of the improvement as a team decision.
+
+3. **List size (Success Metrics).** The top 10% of eligible donors is about `{python} n(round(recent_12["eligible"].mean() * 0.1, -2))` people, while the cultivation program can handle 1,000 donors a year. *Proposal:* report recall, precision, and lift at 1,000 as the main list size, with the top 10% kept as a secondary figure.
+
+4. **Comparison baselines (Success Metrics).** The statement compares the model with random selection and an RFV baseline. The standard RFV score is much weaker than prior-year giving, and officers already select well. *Proposal:* add the prior-year giving ranking and officer selection (measured on held-out donors) as baselines.
+
+5. **Former major donors (Success Metrics and Scope).** Former major donors are `{python} pct(r12_former["eligible"] / r12["eligible"])` of eligible donors but `{python} pct(r12_former["converters"] / r12["converters"], 0)` of converters, and staff likely know them already. *Proposal:* report results separately for never-major donors and consider showing the two groups as separate segments in the dashboard.
+
+6. **Giving tiers (Analytics Approach).** Only `{python} n(conv_top)` of `{python} n(r12["converters"])` 12 month converters reached $5,000 or more. *Proposal:* predict three tiers ($1,200, $2,000, $5,000 and up) instead of five.
+
+7. **Inputs (Analytics Approach).** The statement lists University of Utah engagement and capacity scores. Those tables are not in the data, and the UofU dollar fields that are present are built from PBS giving. *Proposal:* remove UofU scores from the inputs and note that no outside capacity information is available. Passport viewing can stay as an input, but the statement should not promise that viewing behavior will be among the main drivers, since it adds little once giving is known.
+
+8. **3 to 5 year window (Analytics Approach).** With all features there are three cohorts for a 3 year window and one for a 5 year window. *Proposal:* backtest the 12 month and 3 year outcomes with all features, and test the 5 year outcome with giving history only, reporting it as a projection for the full model, as the statement already allows.
+
+9. **Risks (Analytics Approach).** *Proposal:* add three risks to the existing list:
+   - The cultivation program changes outcomes. Contact roughly doubles conversion, so the model must account for who was contacted.
+   - Unmatched legacy gifts (`{python} pct(legacy_unmatched.height / ta.height)` of legacy rows) leave some donors' pre-FY2021 histories incomplete.
+   - Snapshot fields in the constituent table describe FY2026 and leak the outcome if used as features.
+
+10. **Major donor definition (Scope).** *Proposal:* document the definition used here: a constituent whose own payments plus soft credits in a fiscal year total $1,200 or more, with organization payments counted through soft credits and duplicate records removed. Note that the major donor class field in the data uses different cutoffs and should not be used as the definition.
+
+## Appendix: Check on Quoted Numbers
+
+The data concerns list at the top of this notebook quotes its numbers as plain text, because inline code can only use values that have already been computed. The check below stops the render if any of those numbers stop matching the data.
+
+```{python}
+#| label: check-concerns
+
+defect_rows = dict(zip(defects["table"] + ":" + defects["defect"], defects["rows"]))
+org_ids = ["SYN-ORG-DAF", "SYN-ORG-SOFT"]
+
+# each entry: (value computed above, value quoted at the top)
+quoted = {
+    "major share of donors low": (pct(recent["pct_donors_major"].min(), 2), "0.25%"),
+    "major share of donors high": (pct(recent["pct_donors_major"].max(), 2), "0.38%"),
+    "major share of revenue low": (pct(recent["pct_revenue_major"].min()), "5.2%"),
+    "major share of revenue high": (pct(recent["pct_revenue_major"].max()), "10.7%"),
+    "majors at exact tier amounts": (pct(exact_tier / recent_majors.height), "89.9%"),
+    "largest non-major total": (round(nonmajor_max), 1100),
+    "donor-years $750 to $1,199": (just_under, 2),
+    "donor-years strictly between $1,200 and $2,000": (just_over, 0),
+    "majors with a soft credit": (pct(majors_with_soft), "97.3%"),
+    "Legacy communication method share": (pct(legacy_method_share), "52.3%"),
+    "viewer persistence low": (pct(vret.min()), "33.7%"),
+    "viewer persistence high": (pct(vret.max()), "41.3%"),
+    "donor retention low (FY2021 on)": (pct(donor_ret_unite.min()), "75.1%"),
+    "donor retention high (FY2021 on)": (pct(donor_ret_unite.max()), "79.5%"),
+    "titles vs prior giving correlation": (f"{rho_titles_prior:.2f}", "0.01"),
+    "UofU lifetime correlation": (f'{uofu[("Lifetime UofU Fundraising", "correlation")]:.2f}', "0.90"),
+    "UofU lifetime at least PBS": (pct(uofu[("Lifetime UofU Fundraising", "share at least as large")]), "93.9%"),
+    "UofU prev cash positive agreement": (pct(uofu[("Previous FY UofU Cash", "share where both are positive or both zero")]), "100.0%"),
+    "UofU prev cash equal FY2025": (pct(uofu[("Previous FY UofU Cash", "share exactly equal")]), "77.2%"),
+    "prospect committed vs sustainer": (pct(uofu[("Prospect Committed Giving UofU", "share where positive exactly when sustainer")]), "100.0%"),
+    "prospect committed equal FY2026 recurring": (pct(uofu[("Prospect Committed Giving UofU", "share exactly equal")]), "83.4%"),
+    "Broadcaster FY2026 min": (class_decode.filter(pl.col("major_donor_class") == "Broadcaster")["min_fy26_total"][0], 1200),
+    "Broadcaster FY2026 max": (class_decode.filter(pl.col("major_donor_class") == "Broadcaster")["max_fy26_total"][0], 1200),
+    "Director FY2026 min": (class_decode.filter(pl.col("major_donor_class") == "Director")["min_fy26_total"][0], 2000),
+    "CD FY2026 min": (group_decode.filter(pl.col("annual_giving_group") == "CD")["min_fy26_total"][0], 1200),
+    "ND gave in FY2026": (group_decode.filter(pl.col("annual_giving_group") == "ND")["gave_in_fy26"][0], 0),
+    "spouses both gave share": (pct(both_gave_share), "23.0%"),
+    "spouse giving correlation": (f"{spouse_corr:.2f}", "-0.01"),
+    "major donor-years with spouse": (major_with_spouse_n, 236),
+    "both spouses major same year": (both_major_n, 0),
+    "Unite defect rows": (pay_defect_rows, 36044),
+    "Unite defect dollars": (round(pay_defect_amt), 447530),
+    "Unite orphan donor rows": (defect_rows["unite_payments:unmatched_constituent"], 33733),
+    "Unite orphan campaign rows": (defect_rows["unite_payments:unmatched_campaign"], 1225),
+    "Unite $0 rows": (defect_rows["unite_payments:nonpositive_amount"], 1086),
+    "soft credit defect rows": (sc_kind.filter(pl.col("kind") != "real").height, 113),
+    "soft credit orphan rows": (defect_rows["soft_credits:unmatched_constituent"], 79),
+    "soft credit $0 rows": (defect_rows["soft_credits:nonpositive_amount"], 34),
+    "soft credit exact duplicates": (sc_dup_extra, 79),
+    "legacy unmatched rows": (legacy_unmatched.height, 216128),
+    "legacy unmatched dollars": (round(unmatched_total), 6299033),
+    "legacy share copied": (pct(copy_rate), "21.9%"),
+    "Legacy tender share": (pct((pay_clean["tender_type"] == "Legacy").mean()), "42.7%"),
+    "Legacy tender low": (pct(tender_lo), "42.4%"),
+    "Legacy tender high": (pct(tender_hi), "43.0%"),
+    "constituent type agreement": (pct(redundant["pct_rows_agree"][0]), "100.0%"),
+    "organization Passport rows": (pv.filter(pl.col("constituent_id").is_in(org_ids)).height, 9),
+    "organization solicitation rows": (cm.filter(pl.col("constituent_id").is_in(org_ids)).height, 858),
+}
+mismatched = {k: v for k, v in quoted.items() if v[0] != v[1]}
+assert not mismatched, f"Concerns list is out of date: {mismatched}"
+```
+
+All `{python} n(len(quoted))` quoted values match.

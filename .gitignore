@@ -1,0 +1,55 @@
+# ===================================================================
+# PBS Utah Major Donor Prediction - .gitignore
+# ===================================================================
+# Only code, rendered reports, and documentation are committed.
+# The data release is downloaded separately (see README).
+# ===================================================================
+
+# -------------------------------------------------------------------
+# DATA - downloaded from the course data repository, never committed
+# -------------------------------------------------------------------
+tables/
+data_cache/
+docs/
+*.csv
+*.parquet
+
+# -------------------------------------------------------------------
+# PROJECT FILES KEPT LOCAL
+# -------------------------------------------------------------------
+# Sponsor presentation and team documents
+*.pptx
+*.docx
+# Course template
+case_template.qmd
+
+# -------------------------------------------------------------------
+# QUARTO AND PYTHON ARTIFACTS
+# -------------------------------------------------------------------
+.quarto/
+*_files/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+venv/
+.venv/
+
+# -------------------------------------------------------------------
+# IDE AND OS FILES
+# -------------------------------------------------------------------
+.vscode/
+.positai/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+~$*
+
+# -------------------------------------------------------------------
+# LOGS AND TEMPORARY FILES
+# -------------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+*~
