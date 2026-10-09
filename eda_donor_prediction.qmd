@@ -33,44 +33,40 @@ The problem statement leaves two things open until the data has been explored. T
 
 The data is a synthetic replica of PBS Utah's donor data, and the rest of this notebook treats it as the real data. The items below are places where the data does not match its documentation or contains records that look like errors from the replication. They are collected here so they can be reported to Jeff, as the README asks. The checks behind each number are in the data quality section.
 
+**Resolved since the first version of this list.** The copy rows in the Unite payment, soft credit, and legacy tables (36,044 payments, 113 soft credits, and 216,128 legacy rows) were originally the first three items here. The known issues section of the student dictionary now documents them as copies of other rows with one link removed or the amount set to $0, and the data quality section shows that content-based cleaning rules remove exactly those rows.
+
 ::: {.callout-important}
 ## Concerns with this release
 
-**Duplicate records**
-
-1. **Unite payments with a broken field.** 36,044 payments worth $447,530 have IDs starting with `SYN-DEF-`. Each is an exact copy of another payment except for one field: the donor ID is replaced with `SYN-ORPHAN` (33,733 rows), the campaign code is replaced with `SYN-ORPHAN` (1,225 rows), or the amount is set to $0 (1,086 rows). The student dictionary says every Unite link resolves, so these rows are not documented anywhere.
-2. **Soft credits with a broken field.** 113 soft credits with `SYN-DEF-` IDs are copies of other credits, with either the recipient replaced with `SYN-ORPHAN` (79 rows) or the amount set to $0 (34 rows). The dictionary describes `SYN-ORPHAN` recipients as credits that could not be matched, but all 79 repeat a credit that is matched to a person. There are also 79 exact duplicate soft credit rows.
-3. **Unlinked legacy gifts.** The README says some legacy rows link to no constituent, "as in the real data." All 216,128 of these rows (worth $6,299,033) repeat one specific linked gift on every column except the IDs. The number in each `SYN-UNMATCHED` account ID equals the source code number of the gift it copies, and 21.9% of linked gifts have a copy, evenly across gift sizes, gift kinds, and years. The rows appear to have been made by copying linked gifts, so the data cannot show which donors have incomplete histories, which is the real effect of unlinked gifts.
-
 **Values that do not behave as documented**
 
-4. **"Legacy" tender type and communication method.** 42.7% of Unite payments have the tender type "Legacy," which is not a documented value. Its share stays between 42.4% and 43.0% in every fiscal year, gift type, and donor group, so it does not appear to record anything. "Legacy" is also the most common communication method on solicitations (52.3% of solicitation rows), and it is not a documented value for that field either.
-5. **Constituent type.** The reference dictionary describes `Constituent Type` as a list of every type a constituent holds, but it is identical to `Primary Constituent Type` in every row.
-6. **Organizations in viewing and solicitation records.** The two organization records appear in Passport viewing (9 rows) and in solicitation history (858 rows).
+1. **"Legacy" tender type and communication method.** 42.7% of Unite payments have the tender type "Legacy," which is not a documented value. Its share stays between 42.4% and 43.0% in every fiscal year, gift type, and donor group, so it does not appear to record anything. "Legacy" is also the most common communication method on solicitations (52.3% of solicitation rows), and it is not a documented value for that field either.
+2. **Constituent type.** The reference dictionary describes `Constituent Type` as a list of every type a constituent holds, but it is identical to `Primary Constituent Type` in every row.
+3. **Organizations in viewing and solicitation records.** The two organization records appear in Passport viewing (9 rows) and in solicitation history (858 rows).
 
 **Documentation and file mismatches**
 
-7. The README and student dictionary refer to `passport_engagement_by_genre.csv`, but the file in the release is `passport_viewing.csv`. Its columns match the description.
-8. The reference dictionary describes gift premium, acquisition score, affiliation, involvement, capacity rating, and engagement score tables, and none of them are in the release. The problem statement lists engagement and capacity scores as model inputs.
-9. The reference dictionary calls `ta_account_id` a unique key. In this release it identifies a household within one fiscal year and repeats across that household's gifts.
+4. The README and student dictionary refer to `passport_engagement_by_genre.csv`, but the file in the release is `passport_viewing.csv`. Its columns match the description.
+5. The reference dictionary describes gift premium, acquisition score, affiliation, involvement, capacity rating, and engagement score tables, and none of them are in the release. The problem statement lists engagement and capacity scores as model inputs.
+6. The reference dictionary calls `ta_account_id` a unique key. In this release it identifies a household within one fiscal year and repeats across that household's gifts.
 
 **Giving patterns that differ from the business context**
 
-10. **Major donor share.** The problem statement says major donors ($1,200 or more a year) are about 1% of donors and give about 19% of donor revenue. From FY2021 to FY2026 they are 0.25% to 0.38% of donors and give 5.2% to 10.7% of revenue. Using a $1,000 threshold or combining spouses does not close the gap.
-11. **Annual totals cluster at tier amounts.** 89.9% of major donor-years from FY2021 to FY2026 total exactly $1,200, $2,000, $5,000, or $10,000. No non-major donor-year exceeds $1,100, only 2 fall between $750 and $1,199, and none fall strictly between $1,200 and $2,000. 97.3% of major donor-years include a soft credit. Real giving would usually be spread more smoothly around the threshold, so this may not reflect how PBS Utah donors actually give.
-12. **Passport viewing barely persists and is unrelated to giving.** Only 33.7% to 41.3% of each year's Passport viewers have viewing records the next year, while 75.1% to 79.5% of donors give again the next year. Among eligible donors with a viewing record, the rank correlation between titles viewed and prior-year giving is 0.01. If Passport is a member benefit, viewing would be expected to persist more and to track giving at least loosely.
+7. **Major donor share.** The problem statement says major donors ($1,200 or more a year) are about 1% of donors and give about 19% of donor revenue. From FY2021 to FY2026 they are 0.25% to 0.38% of donors and give 5.2% to 10.7% of revenue. Using a $1,000 threshold or combining spouses does not close the gap.
+8. **Annual totals cluster at tier amounts.** 89.9% of major donor-years from FY2021 to FY2026 total exactly $1,200, $2,000, $5,000, or $10,000. No non-major donor-year exceeds $1,100, only 2 fall between $750 and $1,199, and none fall strictly between $1,200 and $2,000. 97.3% of major donor-years include a soft credit. Real giving would usually be spread more smoothly around the threshold, so this may not reflect how PBS Utah donors actually give.
+9. **Passport viewing barely persists and is unrelated to giving.** Only 33.7% to 41.3% of each year's Passport viewers have viewing records the next year, while 75.1% to 79.5% of donors give again the next year. Among eligible donors with a viewing record, the rank correlation between titles viewed and prior-year giving is 0.01. If Passport is a member benefit, viewing would be expected to persist more and to track giving at least loosely.
 
 **Snapshot fields**
 
-13. **The UofU dollar fields are built from PBS giving.** Lifetime UofU Fundraising has a 0.90 correlation with lifetime PBS giving and is at least as large for 93.9% of donors. Previous FY UofU Cash is positive exactly when the person gave to PBS in FY2025 and equals their FY2025 PBS total for 77.2% of constituents. Prospect Committed Giving is positive exactly when the sustainer flag is set and equals FY2026 recurring giving for 83.4%. The data therefore has no information on giving capacity outside PBS Utah.
-14. **Classification fields match FY2026 giving.** Annual Giving Group (meaning listed as unknown) lines up with FY2026 giving bands: ND is no FY2026 gift, and PD, LD, SL, and CD are increasing FY2026 amounts, with CD starting at $1,200. Major Donor Class marks Broadcaster as exactly $1,200 in FY2026 and Director as $2,000 or more, which does not match the documented $1,000 to $4,999 and $5,000 to $9,999 ranges, and the Patron and Lapsed values never appear.
+10. **The UofU dollar fields are built from PBS giving.** Lifetime UofU Fundraising has a 0.90 correlation with lifetime PBS giving and is at least as large for 93.9% of donors. Previous FY UofU Cash is positive exactly when the person gave to PBS in FY2025 and equals their FY2025 PBS total for 77.2% of constituents. Prospect Committed Giving is positive exactly when the sustainer flag is set and equals FY2026 recurring giving for 83.4%. The data therefore has no information on giving capacity outside PBS Utah.
+11. **Classification fields match FY2026 giving.** Annual Giving Group (meaning listed as unknown) lines up with FY2026 giving bands: ND is no FY2026 gift, and PD, LD, SL, and CD are increasing FY2026 amounts, with CD starting at $1,200. Major Donor Class marks Broadcaster as exactly $1,200 in FY2026 and Director as $2,000 or more, which does not match the documented $1,000 to $4,999 and $5,000 to $9,999 ranges, and the Patron and Lapsed values never appear.
 
 **Households**
 
-15. **Spouses' giving is unconnected.** Among years in which one spouse gave (FY2021 on), the other spouse also gave in only 23.0%, the rank correlation between their annual totals is -0.01, and in none of the 236 major donor-years with a spouse on file was the spouse also major that year. Soft credits going to one spouse explain part of this, but couples usually give in more similar ways.
+12. **Spouses' giving is unconnected.** Among years in which one spouse gave (FY2021 on), the other spouse also gave in only 23.0%, the rank correlation between their annual totals is -0.01, and in none of the 236 major donor-years with a spouse on file was the spouse also major that year. Soft credits going to one spouse explain part of this, but couples usually give in more similar ways.
 :::
 
-The duplicate Unite payments and soft credits are removed. Unlinked legacy gifts cannot be attached to anyone, so they stay out of individual histories, and revenue before FY2021 is reported both with and without them.
+The copy rows in the Unite payment, soft credit, and legacy tables are removed using content-based rules, and the copy labels are used only to confirm the rules caught the right rows.
 
 ### Analytic Questions
 
@@ -127,7 +123,7 @@ A first pass through the tables and the three data dictionaries turned up the is
 **Linkage**
 
 - Some Unite payments carry the placeholder donor ID `SYN-ORPHAN`, which matches no constituent. These rows, along with $0 payments and payments with a placeholder campaign code, turn out to be duplicates of other payments with one field broken.
-- Some legacy gifts link to no constituent. They cannot be attached to a person, so they are left out of individual histories and reported separately in revenue totals. A small number of legacy gifts list two IDs, and those are spouse pairs. Because this project works at the individual level, I credit those gifts to the first listed constituent only and flag them. Dropping them is run as a sensitivity check.
+- Some legacy gifts link to no constituent. The README describes these as real unmatched gifts, but each one repeats a linked gift, and the updated known issues section confirms they are copies, so they are removed. A small number of legacy gifts list two IDs, and those are spouse pairs. Because this project works at the individual level, I credit those gifts to the first listed constituent only and flag them. Dropping them is run as a sensitivity check.
 - The constituents table includes two organization records and many people who never gave.
 
 **Columns with no usable information**
@@ -256,11 +252,11 @@ def show(df, pct_cols=(), pct_digits=1):
         pl.col(c).map_elements(lambda v: f"{100 * v:.{pct_digits}f}%", return_dtype=pl.String) for c in pct_cols
     ])
     # keep year columns from getting thousands separators
-    year_cols = ("fy", "fiscal_year", "first_fy", "t", "cohort", "last_cohort")
+    year_cols = ("fy", "fiscal_year", "first_fy", "last_fy", "t", "cohort", "last_cohort")
     out = out.with_columns([pl.col(c).cast(pl.String) for c in out.columns if c in year_cols])
     return out.to_pandas().style.format(thousands=",", precision=2, na_rep="").hide(axis="index")
 
-theme_set(theme_minimal() + theme(figure_size=(8, 4)))
+_ = theme_set(theme_minimal() + theme(figure_size=(8, 4)))  # assign so the old theme is not printed
 ```
 
 ## Table Inventory and Linkage
@@ -460,7 +456,7 @@ coverage = pl.concat([
 span = (
     coverage.group_by("table")
     .agg(first_fy=pl.col("fy").min(), last_fy=pl.col("fy").max(), fiscal_years=pl.len())
-    .sort("first_fy")
+    .sort("first_fy", "table")
 )
 
 # legacy volume is tiny before FY1999, so note where it becomes substantial
@@ -500,107 +496,125 @@ For modeling, this means a 3 to 5 year outcome window can be backtested many tim
 
 ## Data Quality
 
-### Duplicate Records
+### Copy Rows
 
-While checking the orphan payments from the linkage section, I found that each one shares its opportunity ID, date, and amount with a payment from a known donor. That led to a closer look at the row IDs. Most Unite payments have IDs starting with `SYN-PAY`, but some have IDs like `SYN-DEF-unmatched_constituent` or `SYN-DEF-nonpositive_amount`, which describe what is wrong with the row. The legacy table has a similar group of rows whose account IDs start with `SYN-UNMATCHED`.
+The known issues section of the student dictionary describes copy rows in the Unite payment, soft credit, and legacy tables. Each is a copy of another row with one link removed or the amount set to $0, and none of them is part of any constituent's giving. The IDs of these rows begin with `SYN-DEF-` or `SYN-UNMATCHED`, but the instructions are to use those labels to check cleaning rules and not as the rules themselves, since a cleaning rule should also work on future extracts that carry no such labels.
 
-For each group, the check below looks for a "twin": a valid row that matches the defect row on every column except the row ID and the one field that is broken (the donor ID, the campaign code, or the amount).
+The cleaning rules below therefore look only at the content of each row. A row is treated as a copy when it fails a validity check (its donor or recipient is not a constituent, its campaign code is not in the campaign table, its amount is $0 or less, or a legacy gift has no linked constituent) and an otherwise identical valid row exists. "Otherwise identical" means the two rows match on every column except the row ID and the field that failed the check. Soft credits also contain exact duplicate rows, which are removed first. After the rules run, the labels are used only to check the result.
 
 ```{python}
-#| label: defects
+#| label: copy-rules
 
-# label each Unite payment and soft credit as real or by its defect type, taken from the row ID
-pay_kind = pay.with_columns(
-    kind=pl.col("payment_id").str.extract(r"^SYN-DEF-([a-z_]+)").fill_null("real")
-)
-sc_kind = sc.with_columns(
-    kind=pl.col("credit_id").str.extract(r"^SYN-DEF-([a-z_]+)").fill_null("real")
-)
+constituent_ids = con["constituent_id"].implode()
+campaign_codes = cc["marketing_code"].implode()
 
-# the field each defect type breaks, so twins are matched on everything else
-broken_field = {
-    "unite_payments": {
-        "unmatched_constituent": "donor_id",
-        "unmatched_campaign": "marketing_code",
-        "nonpositive_amount": "payment_amount",
-    },
-    "soft_credits": {
-        "unmatched_constituent": "soft_credit_constituent_id",
-        "nonpositive_amount": "credit_amount",
-    },
-}
-
-def twin_summary(df, table, id_col, amt_col):
-    real = df.filter(pl.col("kind") == "real")
+def flag_copies(df, row_id, checks):
+    # checks maps a check name to (expression that is True when the row fails, the field that check is about)
+    df = df.with_columns([expr.alias(name) for name, (expr, _) in checks.items()])
+    valid = df.filter(~pl.any_horizontal([pl.col(name) for name in checks]))
     out = []
-    for kind, field in broken_field[table].items():
-        bad = df.filter(pl.col("kind") == kind)
-        match_on = [c for c in df.columns if c not in (id_col, field, "kind")]
-        out.append({
-            "table": table,
-            "defect": kind,
-            "rows": bad.height,
-            "amount": bad[amt_col].sum(),
-            "rows_with_real_twin": bad.join(real, on=match_on, how="semi").height,
-        })
-    return out
+    for name, (_, field) in checks.items():
+        # match on every column except the row ID, the failing field, and the check flags
+        match_on = [c for c in df.columns if c not in (row_id, field, *checks)]
+        failing = df.filter(pl.col(name))
+        twins = failing.join(valid.select(match_on).unique(), on=match_on, how="semi", nulls_equal=True)
+        out.append(failing.select(row_id, check=pl.lit(name),
+                                  has_valid_twin=pl.col(row_id).is_in(twins[row_id].implode())))
+    return pl.concat(out)
 
-# legacy rows with no constituent: twins are linked rows that match on every non-ID column
+# Unite payments
+pay_flags = flag_copies(pay, "payment_id", {
+    "donor is not a constituent": (~pl.col("donor_id").is_in(constituent_ids), "donor_id"),
+    "campaign code not in campaign table": (~pl.col("marketing_code").is_in(campaign_codes), "marketing_code"),
+    "amount of $0 or less": (pl.col("payment_amount") <= 0, "payment_amount"),
+})
+
+# soft credits: exact duplicates first, then the content checks
+sc_dedup = sc.unique(maintain_order=True)
+sc_dup_extra = sc.height - sc_dedup.height
+sc_dup_amt = sc["credit_amount"].sum() - sc_dedup["credit_amount"].sum()
+sc_flags = flag_copies(sc_dedup, "credit_id", {
+    "recipient is not a constituent": (~pl.col("soft_credit_constituent_id").is_in(constituent_ids), "soft_credit_constituent_id"),
+    "amount of $0 or less": (pl.col("credit_amount") <= 0, "credit_amount"),
+})
+
+# legacy payments: no linked constituent, with a linked twin on every non-ID column
 legacy_linked = ta.filter(pl.col("constituent_id_1").is_not_null())
 legacy_unmatched = ta.filter(pl.col("constituent_id_1").is_null())
 legacy_match_on = [c for c in ta.columns if c != "ta_account_id" and not c.startswith("constituent_id")]
+legacy_twinned = legacy_unmatched.join(
+    legacy_linked.select(legacy_match_on).unique(), on=legacy_match_on, how="semi", nulls_equal=True
+)
 
-# soft credits also contain exact duplicate rows among the real credits
-sc_real = sc_kind.filter(pl.col("kind") == "real")
-sc_dup_extra = sc_real.height - sc_real.n_unique()
+def check_summary(table, flags, df, row_id, amt):
+    return (
+        flags.join(df.select(row_id, amt), on=row_id)
+        .group_by("check")
+        .agg(rows_failing=pl.len(), with_valid_twin=pl.col("has_valid_twin").sum(), amount=pl.col(amt).sum())
+        .with_columns(table=pl.lit(table))
+        .select("table", "check", "rows_failing", "with_valid_twin", "amount")
+    )
 
-defects = pl.DataFrame(
-    twin_summary(pay_kind, "unite_payments", "payment_id", "payment_amount")
-    + twin_summary(sc_kind, "soft_credits", "credit_id", "credit_amount")
-    + [
-        {
-            "table": "soft_credits",
-            "defect": "exact_duplicate_row",
-            "rows": sc_dup_extra,
-            "amount": sc_real["credit_amount"].sum() - sc_real.unique()["credit_amount"].sum(),
-            "rows_with_real_twin": sc_dup_extra,
-        },
-        {
-            "table": "team_approach_legacy_payments",
-            "defect": "unmatched (SYN-UNMATCHED)",
-            "rows": legacy_unmatched.height,
-            "amount": legacy_unmatched["payment_amount"].sum(),
-            "rows_with_real_twin": legacy_unmatched.join(
-                legacy_linked, on=legacy_match_on, how="semi", nulls_equal=True
-            ).height,
-        },
-    ]
-).with_columns(pct_with_twin=pl.col("rows_with_real_twin") / pl.col("rows"))
+copy_checks = pl.concat([
+    check_summary("unite_payments", pay_flags, pay, "payment_id", "payment_amount"),
+    pl.DataFrame({"table": ["soft_credits"], "check": ["exact duplicate row"], "rows_failing": [sc_dup_extra],
+                  "with_valid_twin": [sc_dup_extra], "amount": [sc_dup_amt]}),
+    check_summary("soft_credits", sc_flags, sc_dedup, "credit_id", "credit_amount"),
+    pl.DataFrame({"table": ["team_approach_legacy_payments"], "check": ["no linked constituent"],
+                  "rows_failing": [legacy_unmatched.height], "with_valid_twin": [legacy_twinned.height],
+                  "amount": [legacy_unmatched["payment_amount"].sum()]}),
+], how="vertical_relaxed").sort("table", "check")
 
-# confirm the real rows are clean on the fields the defects break
-real_pay = pay_kind.filter(pl.col("kind") == "real")
-real_zero = (real_pay["payment_amount"] <= 0).sum()
-real_orphan = real_pay.filter(
-    (pl.col("donor_id") == "SYN-ORPHAN") | (pl.col("marketing_code") == "SYN-ORPHAN")
-).height
-pay_defect_rows = pay.height - real_pay.height
-pay_defect_amt = pay["payment_amount"].sum() - real_pay["payment_amount"].sum()
+# rows removed by the rules
+pay_copy_ids = pay_flags.filter("has_valid_twin")["payment_id"].unique()
+sc_copy_ids = sc_flags.filter("has_valid_twin")["credit_id"].unique()
+removed_by_check = {
+    f'{r["table"]}:{r["check"]}': r["with_valid_twin"] for r in copy_checks.iter_rows(named=True)
+}
+failing_without_twin = (copy_checks["rows_failing"] - copy_checks["with_valid_twin"]).sum()
+pay_copy_rows = pay_copy_ids.len()
+pay_copy_amt = pay.filter(pl.col("payment_id").is_in(pay_copy_ids.implode()))["payment_amount"].sum()
 
 # the linked legacy source_code is unique per row, which makes the twin match one to one
 legacy_src_distinct = legacy_linked["source_code"].n_unique()
 
-show(defects, pct_cols=["pct_with_twin"])
+show(copy_checks)
 ```
 
-Every defect row has a twin among the valid rows. The `{python} n(pay_defect_rows)` defect rows in the Unite table add `{python} usd(pay_defect_amt)` that would otherwise be counted twice. Among the valid `SYN-PAY` rows, `{python} "none" if real_zero == 0 else n(real_zero)` of the payments are $0 or less and `{python} "none" if real_orphan == 0 else n(real_orphan)` have a placeholder donor or campaign code. So the $0 payments, the orphan donor IDs, and the orphan campaign codes are not separate problems. They are all copies of valid payments with one field broken, and removing them loses no information.
+Every row that fails a check has an otherwise identical valid row (`{python} "none" if failing_without_twin == 0 else n(failing_without_twin)` without one), so removing the failing rows does not drop any gift that is not already recorded in a valid row. The rules remove `{python} n(pay_copy_rows)` Unite payments worth `{python} usd(pay_copy_amt)` that would otherwise be counted twice, plus `{python} n(sc_dup_extra + sc_copy_ids.len())` soft credits and `{python} n(legacy_twinned.height)` legacy rows. The table below checks the result against the copy labels.
 
-The legacy `SYN-UNMATCHED` rows are the largest group, and they need more explanation because the documentation describes them as real gifts.
+```{python}
+#| label: copy-label-check
+
+def label_check(table, all_ids, removed_ids, prefix):
+    labeled = all_ids.filter(all_ids.str.starts_with(prefix))
+    return {
+        "table": table,
+        "copy_label": prefix,
+        "removed_by_rules": removed_ids.len(),
+        "carry_copy_label": labeled.len(),
+        "removed_and_labeled": removed_ids.is_in(labeled.implode()).sum(),
+        "labeled_but_kept": (~labeled.is_in(removed_ids.implode())).sum(),
+        "removed_but_unlabeled": (~removed_ids.is_in(labeled.implode())).sum(),
+    }
+
+label_agreement = pl.DataFrame([
+    label_check("unite_payments", pay["payment_id"], pay_copy_ids, "SYN-DEF-"),
+    label_check("soft_credits", sc_dedup["credit_id"], sc_copy_ids, "SYN-DEF-"),
+    label_check("team_approach_legacy_payments", ta["ta_account_id"], legacy_twinned["ta_account_id"], "SYN-UNMATCHED"),
+])
+label_mismatches = label_agreement.select(pl.col("labeled_but_kept") + pl.col("removed_but_unlabeled")).to_series().sum()
+
+show(label_agreement)
+```
+
+The rules and the labels agree exactly: `{python} "no" if label_mismatches == 0 else n(label_mismatches)` labeled rows are kept and no unlabeled rows are removed. The `{python} n(sc_dup_extra)` exact duplicate soft credits are not labeled, since they are plain repeats of a credit ID rather than copies with a field changed, and the student dictionary documents them separately. So the $0 payments, the payments whose donor or campaign code does not link, and the soft credits whose recipient does not link are not separate problems. They are all copies of valid rows with one field changed, and removing them loses no information.
+
+The legacy rows with no linked constituent are the largest group and get a closer look below.
 
 ### The Unmatched Legacy Rows
 
-The README says: "Some legacy rows link to no constituent, as in the real data." The student dictionary lists this as one of two exceptions to the rule that every link resolves. These are gifts PBS Utah received but could never match to a person in Unite, for example because an old donor record was never migrated. They belong in organization revenue but cannot be part of any individual's history.
-
-Before deciding how to count them, I checked how the unmatched rows relate to the linked ones.
+The README says that "some legacy rows link to no constituent, as in the real data," which on its own reads as gifts PBS Utah received but could never match to a person. The updated known issues section settles the question: these rows are copies of linked gifts and are not part of anyone's giving. The checks below show the same thing from the data itself.
 
 ```{python}
 #| label: unmatched-evidence
@@ -649,23 +663,18 @@ The unmatched rows do not look like separate gifts:
 2. **No linked gift is repeated more than once.** The `{python} n(legacy_unmatched.height)` unmatched rows point to `{python} n(unmatched_src_distinct)` different linked gifts, or `{python} pct(copy_rate)` of all linked gifts.
 3. **They are spread evenly.** The share of linked gifts with an unmatched twin stays between `{python} pct(copy_lo)` and `{python} pct(copy_hi)` across gift sizes, gift kinds, spouse rows, and recent fiscal years. Gifts that fail to match would usually be concentrated among older or incomplete records, not spread evenly.
 
-This is listed in the data concerns at the top of the notebook. For the analysis, it changes little:
-
-- **Individual histories.** Unmatched gifts cannot be attached to anyone, so they are left out of individual giving.
-- **Revenue before FY2021.** Linked legacy gifts total `{python} usd(linked_total)`. Following the README, the organization total including unmatched gifts is `{python} usd(linked_total + unmatched_total)`, which is `{python} pct(unmatched_total / linked_total)` higher. Because the unmatched amounts repeat linked gifts, I report revenue for these years both ways. Revenue from FY2021 on is not affected.
-- **Incomplete histories.** If `{python} pct(legacy_unmatched.height / ta.height)` of legacy gifts cannot be matched, some donors' pre-FY2021 histories are incomplete. Their tenure and lifetime giving would be understated, and some long-time donors would look new when Unite begins. This cannot be measured here because the unmatched gifts do not point to anyone, so legacy-based features should be treated as lower bounds.
+Because the unmatched rows are copies, they are removed from both individual histories and revenue totals. Linked legacy gifts total `{python} usd(linked_total)`. Counting the copies would have added `{python} usd(unmatched_total)`, or `{python} pct(unmatched_total / linked_total)`, of revenue that does not exist. No donor's legacy history is incomplete because of them, since every copied gift is still recorded under its linked constituent.
 
 ```{python}
 #| label: clean-tables
 
-# cleaned versions used in the rest of the notebook
-pay_clean = real_pay.drop("kind")
-sc_clean = sc_real.drop("kind").unique()
-ta_clean = legacy_linked          # individual histories use linked gifts only
-ta_unmatched = legacy_unmatched   # kept aside for organization revenue before FY2021
+# cleaned versions used in the rest of the notebook, built from the content rules above
+pay_clean = pay.filter(~pl.col("payment_id").is_in(pay_copy_ids.implode()))
+sc_clean = sc_dedup.filter(~pl.col("credit_id").is_in(sc_copy_ids.implode()))
+ta_clean = legacy_linked          # unmatched legacy rows are copies, so only linked gifts remain
 ```
 
-The cleaned tables keep `{python} n(pay_clean.height)` Unite payments, `{python} n(sc_clean.height)` soft credits, and `{python} n(ta_clean.height)` linked legacy payments, with the `{python} n(ta_unmatched.height)` unmatched legacy gifts kept aside for revenue totals.
+The cleaned tables keep `{python} n(pay_clean.height)` Unite payments, `{python} n(sc_clean.height)` soft credits, and `{python} n(ta_clean.height)` legacy payments.
 
 ### Column Profile
 
@@ -821,9 +830,9 @@ In total `{python} n(drop_list.height)` columns are dropped. Two single-value co
 
 These rules are applied before building the giving panel:
 
-1. Remove all `SYN-DEF` rows from Unite payments and soft credits, since each is a copy of a valid row with one field broken.
+1. Remove Unite payments and soft credits that fail a validity check (a donor, recipient, or campaign code that does not link, or an amount of $0 or less) and have an otherwise identical valid row, since each is a copy.
 2. Remove exact duplicate soft credit rows.
-3. Leave legacy rows with no linked constituent out of individual histories, and report revenue before FY2021 both with and without them.
+3. Remove legacy rows with no linked constituent, since each is a copy of a linked gift.
 4. Exclude the two organization records from individual giving and use the soft credits instead.
 5. Credit legacy gifts that list two spouses to the first listed constituent only, with a flag, and repeat key results with those rows dropped as a sensitivity check.
 6. Drop the columns in the drop list.
@@ -983,13 +992,11 @@ Retention moves smoothly across the switch: `{python} pct(ret_19)` from FY2019 t
 
 ### How Concentrated Is Major Giving?
 
-The problem statement says major donors are about 1% of donors and give about 19% of donor revenue. The table below checks that claim in each fiscal year. Donors are people with positive giving that year, and major donors are those with a total of $1,200 or more. For legacy years, the last column shows the major share again with unmatched legacy gifts added to the revenue total.
+The problem statement says major donors are about 1% of donors and give about 19% of donor revenue. The table below checks that claim in each fiscal year. Donors are people with positive giving that year, and major donors are those with a total of $1,200 or more.
 
 ```{python}
 #| label: concentration
-# donors, major donors, and revenue by fiscal year; legacy years also shown with unmatched gifts in revenue
-
-unmatched_fy = ta_unmatched.group_by(fy=fiscal_year("gift_date")).agg(unmatched_rev=pl.col("payment_amount").sum())
+# donors, major donors, and revenue by fiscal year
 
 concentration = (
     panel.filter(pl.col("fy") >= 1999)
@@ -1000,15 +1007,10 @@ concentration = (
         revenue=pl.col("total").sum(),
         major_revenue=pl.col("total").filter(pl.col("major")).sum(),
     )
-    .join(unmatched_fy, on="fy", how="left")
     .with_columns(
         pct_donors_major=pl.col("major_donors") / pl.col("donors"),
         pct_revenue_major=pl.col("major_revenue") / pl.col("revenue"),
-        pct_revenue_major_with_unmatched=pl.when(pl.col("unmatched_rev").is_not_null()).then(
-            pl.col("major_revenue") / (pl.col("revenue") + pl.col("unmatched_rev"))
-        ),
     )
-    .drop("unmatched_rev")
     .sort("fy")
 )
 
@@ -1020,7 +1022,7 @@ pooled_recent = recent.select(
 legacy_era = concentration.filter(pl.col("fy").is_between(2011, 2020))
 
 show(concentration.filter(pl.col("fy") >= 2011),
-     pct_cols=["pct_donors_major", "pct_revenue_major", "pct_revenue_major_with_unmatched"], pct_digits=2)
+     pct_cols=["pct_donors_major", "pct_revenue_major"], pct_digits=2)
 ```
 
 ```{python}
@@ -2656,12 +2658,11 @@ The team planned to revise the business problem statement after the EDA. The pro
 
 8. **3 to 5 year window (Analytics Approach).** With all features there are three cohorts for a 3 year window and one for a 5 year window. *Proposal:* backtest the 12 month and 3 year outcomes with all features, and test the 5 year outcome with giving history only, reporting it as a projection for the full model, as the statement already allows.
 
-9. **Risks (Analytics Approach).** *Proposal:* add three risks to the existing list:
+9. **Risks (Analytics Approach).** *Proposal:* add two risks to the existing list:
    - The cultivation program changes outcomes. Contact roughly doubles conversion, so the model must account for who was contacted.
-   - Unmatched legacy gifts (`{python} pct(legacy_unmatched.height / ta.height)` of legacy rows) leave some donors' pre-FY2021 histories incomplete.
    - Snapshot fields in the constituent table describe FY2026 and leak the outcome if used as features.
 
-10. **Major donor definition (Scope).** *Proposal:* document the definition used here: a constituent whose own payments plus soft credits in a fiscal year total $1,200 or more, with organization payments counted through soft credits and duplicate records removed. Note that the major donor class field in the data uses different cutoffs and should not be used as the definition.
+10. **Major donor definition (Scope).** *Proposal:* document the definition used here: a constituent whose own payments plus soft credits in a fiscal year total $1,200 or more, with organization payments counted through soft credits and copy rows removed by the content-based rules. Note that the major donor class field in the data uses different cutoffs and should not be used as the definition.
 
 ## Appendix: Check on Quoted Numbers
 
@@ -2670,7 +2671,6 @@ The data concerns list at the top of this notebook quotes its numbers as plain t
 ```{python}
 #| label: check-concerns
 
-defect_rows = dict(zip(defects["table"] + ":" + defects["defect"], defects["rows"]))
 org_ids = ["SYN-ORG-DAF", "SYN-ORG-SOFT"]
 
 # each entry: (value computed above, value quoted at the top)
@@ -2705,18 +2705,9 @@ quoted = {
     "spouse giving correlation": (f"{spouse_corr:.2f}", "-0.01"),
     "major donor-years with spouse": (major_with_spouse_n, 236),
     "both spouses major same year": (both_major_n, 0),
-    "Unite defect rows": (pay_defect_rows, 36044),
-    "Unite defect dollars": (round(pay_defect_amt), 447530),
-    "Unite orphan donor rows": (defect_rows["unite_payments:unmatched_constituent"], 33733),
-    "Unite orphan campaign rows": (defect_rows["unite_payments:unmatched_campaign"], 1225),
-    "Unite $0 rows": (defect_rows["unite_payments:nonpositive_amount"], 1086),
-    "soft credit defect rows": (sc_kind.filter(pl.col("kind") != "real").height, 113),
-    "soft credit orphan rows": (defect_rows["soft_credits:unmatched_constituent"], 79),
-    "soft credit $0 rows": (defect_rows["soft_credits:nonpositive_amount"], 34),
-    "soft credit exact duplicates": (sc_dup_extra, 79),
-    "legacy unmatched rows": (legacy_unmatched.height, 216128),
-    "legacy unmatched dollars": (round(unmatched_total), 6299033),
-    "legacy share copied": (pct(copy_rate), "21.9%"),
+    "Unite copy rows": (pay_copy_rows, 36044),
+    "soft credit copy rows": (sc_copy_ids.len(), 113),
+    "legacy copy rows": (legacy_twinned.height, 216128),
     "Legacy tender share": (pct((pay_clean["tender_type"] == "Legacy").mean()), "42.7%"),
     "Legacy tender low": (pct(tender_lo), "42.4%"),
     "Legacy tender high": (pct(tender_hi), "43.0%"),

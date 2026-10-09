@@ -92,9 +92,10 @@ First-time donors nearly doubled in FY2026 (4,530 to 8,801), and 26% of donors w
 
 ## Data Quality Findings
 
-The EDA documents 15 concerns with the data release, which were collected for the course instructor. The most important:
+- **Copy rows, removed with content-based rules.** 36,044 payments ($447,530), 113 soft credits, and 216,128 unlinked legacy gifts ($6.3M) are copies of other rows with one link removed or the amount set to $0. The data dictionary documents them, and their IDs carry copy labels, but the cleaning rules use only the content of each row (a broken link or $0 amount plus an otherwise identical valid row). The labels are used only to confirm the rules, and the two agree exactly.
 
-- **Duplicate records.** 36,044 payments ($447,530) and 113 soft credits are copies of valid rows with one field broken, and all 216,128 unlinked legacy gifts ($6.3M) repeat a linked gift.
+The EDA also lists 12 open concerns with the data release for the course instructor. The most important:
+
 - **Leaky snapshot fields.** Major donor class, annual giving group, the sustainer flag, and three University of Utah dollar fields can all be rebuilt from FY2026 PBS giving, so they would leak the outcome and are excluded.
 - **No outside capacity data.** The University of Utah engagement and capacity score tables named in the business problem are not in the release.
 - **Undocumented values.** A "Legacy" value appears as the tender type on 43% of payments and as the communication method on 52% of solicitations, with no documented meaning.
