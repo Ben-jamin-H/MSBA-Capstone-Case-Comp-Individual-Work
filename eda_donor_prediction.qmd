@@ -1693,6 +1693,58 @@ Several parts of giving history separate future major donors from everyone else:
 - **Sustainers convert less.** Monthly sustainers convert at a lower rate than donors who are not on a monthly plan, and none of the `{python} n(signals.filter((pl.col("feature") == "Monthly sustainer amount") & (pl.col("level") == "over $25"))["eligible"][0])` eligible donor-years giving over $25 a month converted. Monthly giving seems to be a separate path from major giving, not a step toward it.
 - **Recency is mixed.** Donors whose last gift came within 30 days of year end convert most often, but the next band (31 to 90 days) converts less often than donors whose last gift was more than 90 days before year end. Monthly sustainers make up `{python} pct(sust_31_90)` of that middle band, so recency is partly a stand-in for sustainer status here.
 
+These comparisons use the overall base rate, so they mix each feature's own signal with giving level. The next subsection separates the two, and some of the patterns above do not hold up.
+
+### Signals Within Giving Bands
+
+The rates above compare each feature level with the overall base rate, so part of what they show is giving level again: donors with an upgrade gift, for example, also tend to give more. To check what each feature adds, I use the same bands of prior-year giving as in the solicitation and Passport sections. For each feature level, I count how many converters would be expected if those donors converted at the average rate for their band, and compare that with the converters actually observed. A ratio near 1 means the feature's overall lift is mostly prior-year giving in another form. A ratio well above or below 1 means it adds information.
+
+```{python}
+#| label: signals-within-band
+# observed and expected converters for each feature level, holding prior-year giving roughly constant
+
+WB_LABELS = ["$240 or less", "$241 to $500", "over $500"]
+
+def within_band(df):
+    df = df.with_columns(prior_band=pl.col("prior_total").cut([240, 500], labels=WB_LABELS))
+    df = df.with_columns(band_rate=pl.col("converted").mean().over("prior_band"))
+    out = []
+    for name, expr in signal_specs:
+        out.append(
+            df.with_columns(level=expr.cast(pl.String)).group_by("level")
+            .agg(eligible=pl.len(), converters=pl.col("converted").sum(), expected=pl.col("band_rate").sum())
+            .with_columns(feature=pl.lit(name), ratio=pl.col("converters") / pl.col("expected"))
+        )
+    return pl.concat(out)
+
+wb_all = within_band(feat)
+wb_never = within_band(feat.filter(~pl.col("former_major")))
+within_signals = (
+    wb_all.join(wb_never.select("feature", "level", never_converters="converters", never_expected="expected", never_ratio="ratio"),
+                on=["feature", "level"], how="left")
+    .join(signals.select("feature", "level", "lift"), on=["feature", "level"], how="left")
+    .select("feature", "level", "eligible", "converters", "lift", "expected", "ratio",
+            "never_converters", "never_expected", "never_ratio")
+    .sort("feature", "level")
+)
+
+def wb(feature, level, col="ratio"):
+    return within_signals.filter((pl.col("feature") == feature) & (pl.col("level") == level))[col][0]
+
+show(within_signals.with_columns(pl.col("lift", "ratio", "never_ratio").round(2), pl.col("expected", "never_expected").round(1)),
+     caption="Observed over expected converters within prior-year giving bands, by feature level")
+```
+
+Holding prior-year giving roughly constant changes the picture for several features:
+
+- **Upgrade gifts and soft credits in FY t add nothing.** An upgrade gift has an overall lift of `{python} f'{wb("Upgrade gift in FY t", "yes", "lift"):.1f}'`, but upgrade donors convert at `{python} f'{wb("Upgrade gift in FY t", "yes"):.2f}'` times the rate their band predicts (`{python} f'{wb("Upgrade gift in FY t", "yes", "never_ratio"):.2f}'` for never-major donors). A soft credit in FY t has a lift of `{python} f'{wb("Soft credit in FY t", "yes", "lift"):.1f}'` and a within-band ratio of `{python} f'{wb("Soft credit in FY t", "yes"):.2f}'` (`{python} f'{wb("Soft credit in FY t", "yes", "never_ratio"):.2f}'`). Donors with these gifts already give near the top of the regular range, which is where their overall lift comes from.
+- **Short giving histories are the clearest signal.** First-year donors, donors who gave in only one of the last five years, and donors with no gift the year before convert at `{python} f'{wb("Years since first gift", "1"):.2f}'`, `{python} f'{wb("Years given, last 5", "1 of 5"):.2f}'`, and `{python} f'{wb("Change from last year", "no gift last year"):.2f}'` times the expected rate, and the pattern holds for never-major donors. Giving in all five years is `{python} f'{wb("Years given, last 5", "5 of 5"):.2f}'` (`{python} f'{wb("Years given, last 5", "5 of 5", "never_ratio"):.2f}'` for never-major donors).
+- **Earlier soft credits still matter.** A soft credit before FY t is `{python} f'{wb("Soft credit before FY t", "yes"):.2f}'` times the expected rate (`{python} f'{wb("Soft credit before FY t", "yes", "never_ratio"):.2f}'` for never-major donors), unlike a soft credit in FY t itself.
+- **Direction of change mostly marks former major donors.** Giving less than the year before is `{python} f'{wb("Change from last year", "gave less than last year"):.2f}'` overall but `{python} f'{wb("Change from last year", "gave less than last year", "never_ratio"):.2f}'` among never-major donors, so it largely picks out former major donors stepping down. Giving more than the year before is `{python} f'{wb("Change from last year", "gave more than last year"):.2f}'` overall and `{python} f'{wb("Change from last year", "gave more than last year", "never_ratio"):.2f}'` among never-major donors, so its strong overall lift for never-major donors was mostly giving level.
+- **Sustainers and recency.** Sustainers giving $10 a month or less are at `{python} f'{wb("Monthly sustainer amount", "$10 or less"):.2f}'`, and none of the `{python} n(wb("Monthly sustainer amount", "over $25", "eligible"))` donor-years giving more than $25 a month converted, where about `{python} f'{wb("Monthly sustainer amount", "over $25", "expected"):.0f}'` were expected. Within bands, every recency group is between `{python} f'{within_signals.filter(pl.col("feature") == "Days since last gift")["ratio"].min():.2f}'` and `{python} f'{within_signals.filter(pl.col("feature") == "Days since last gift")["ratio"].max():.2f}'`, and the most recent group no longer stands out.
+
+These ratios have no intervals, and the never-major ratios rest on fewer converters, so small differences from 1 should not be read as signal. The large ones, such as the short-history ratios and the drop for upgrade gifts, are well beyond what a few converters either way would change.
+
 ### Soft Credit Timing
 
 Soft credits were tied closely to major giving in the panel section, so the timing matters. A soft credit in the same year a donor becomes major is part of the outcome, not a predictor of it.
@@ -1710,7 +1762,7 @@ soft_new_in_conv = (soft_timing["soft_conversion_year"] & ~soft_timing["soft_bef
 
 Among 12 month converters, `{python} pct(soft_in_conv)` have a soft credit in the year they convert, but only `{python} pct(soft_in_t)` had one in FY t, and `{python} pct(soft_new_in_conv)` received their first soft credit in the conversion year itself. So most major giving arrives through a soft credit in the same year, often the donor's first. For modeling:
 
-- Soft credits from FY t and earlier are fair features and carry real signal.
+- Soft credits from FY t and earlier are fair features, though only those from earlier years add signal once prior-year giving is known.
 - Soft credits from the outcome year must never be used, and any feature built from "lifetime" soft credits has to be cut off at the prediction date.
 - Because `{python} pct(soft_new_in_conv)` of converters have no soft credit before the conversion year, the model will have to find a large share of them through other signals.
 
@@ -1800,7 +1852,7 @@ For judging the model, I would use both baselines as planned, but treat prior-ye
 
 ### Summary for Modeling
 
-- **Useful features, all measured through FY t:** prior-year total, former major status, years given in the last five, years since first gift, change from the previous year, an upgrade gift in FY t, soft credits before or in FY t, and monthly sustainer status and amount.
+- **Useful features, all measured through FY t:** prior-year total, former major status, years given in the last five, years since first gift, change from the previous year, soft credits before FY t, and monthly sustainer status and amount. Upgrade gifts and soft credits in FY t look strong overall but add nothing once prior-year giving is held constant.
 - **Leakage rules:** no soft credits, gift labels, or totals from the outcome years, and no lifetime figures that run past the prediction date.
 - **Baselines:** RFV is weaker than prior-year total alone. The model should be compared with both, and success should be judged against prior-year total.
 - **Sustainers** are a large group with low conversion, so the model should not treat recent monthly giving as a sign of major potential.
@@ -2351,7 +2403,7 @@ selection_profile = (
 show(selection_profile, pct_cols=["former_major", "gave_5_of_5_years", "soft_credit_before", "upgrade_gift", "converted_next_year"], pct_digits=2, caption="Selected, held-out, and non-selected donors compared")
 ```
 
-Selection draws almost entirely from the eligible population (`{python} pct(selected_in_eligible)` of selected donors are eligible in their cohort) and covers about `{python} pct(selected_share_of_eligible)` of it each year. Officers pick from the top of the giving distribution: the median selected donor ranks in the top `{python} pct(median_rank_selected)` of eligible donors by prior-year giving. Compared with donors who were not selected, they are much more likely to be former major donors, to have given in all of the last five years, to have a past soft credit, and to have made an upgrade gift, which are the same signals found in the giving behavior section. The contacted and held-out groups look alike on all of these measures, which is what random assignment should produce.
+Selection draws almost entirely from the eligible population (`{python} pct(selected_in_eligible)` of selected donors are eligible in their cohort) and covers about `{python} pct(selected_share_of_eligible)` of it each year. Officers pick from the top of the giving distribution: the median selected donor ranks in the top `{python} pct(median_rank_selected)` of eligible donors by prior-year giving. Compared with donors who were not selected, they are much more likely to be former major donors, to have given in all of the last five years, to have a past soft credit, and to have made an upgrade gift. All but the upgrade gift are signals that hold up within giving bands in the giving behavior section. The contacted and held-out groups look alike on all of these measures, which is what random assignment should produce.
 
 ### Effect of Contact
 
@@ -2435,7 +2487,7 @@ show(band_groups, pct_cols=["rate"], pct_digits=2, caption="Conversion by cultiv
 
 Of the `{python} n(ps_tot["new_majors_next_year"])` new major donors from FY2023 to FY2026, `{python} n(ps_tot["selected_in_fy_t"])` (`{python} pct(ps_tot["selected_in_fy_t"] / ps_tot["new_majors_next_year"])`) had been selected for cultivation the year before and `{python} n(ps_tot["contacted_in_fy_t"])` had been contacted. Using the held-out rate as what would have happened without contact, roughly `{python} n(contact_attrib)` of those contacted conversions can be credited to contact itself. That is a rough figure, but it means a meaningful share of the outcomes in these years were produced by staff action.
 
-The band table also shows that officers select well. Among donors who gave over $500, held-out donors who were never contacted still convert at `{python} pct(bg[("over $500", "selected, held out")])`, compared with `{python} pct(bg[("over $500", "not selected")])` for donors in the same band who were not selected. Officers are using more than prior-year giving amount when they choose. The selection profile table suggests what: the selected donors stand out on former major status, giving consistency, past soft credits, and upgrade gifts, all of which are available to a model.
+The band table also shows that officers select well. Among donors who gave over $500, held-out donors who were never contacted still convert at `{python} pct(bg[("over $500", "selected, held out")])`, compared with `{python} pct(bg[("over $500", "not selected")])` for donors in the same band who were not selected. Officers are using more than prior-year giving amount when they choose. The selection profile table suggests what: the selected donors stand out on former major status, giving consistency, and past soft credits, all of which add signal within giving bands and are available to a model.
 
 ### What This Means for Modeling
 
@@ -2647,7 +2699,7 @@ The introduction listed fifteen questions, ten from planning and five added duri
 3. **Which tiers do converters reach?** `{python} n(tier_conv.get("$1,200", 0))` of `{python} n(r12["converters"])` 12 month converters reach $1,200, `{python} n(tier_conv.get("$2,000", 0))` reach $2,000, and only `{python} n(conv_top)` reach $5,000 or more.
 4. **How many backtest cohorts are there?** With solicitation and Passport features, 5 cohorts for 12 months, 3 for 3 years, and 1 for 5 years. With giving history alone, more than 20 for each window.
 5. **Who is eligible?** Donors who gave in FY t and gave under $1,200. This group covers `{python} pct(src_recent["gave_last_year"] / src_recent["new_majors"], 0)` of each year's new major donors.
-6. **Which giving patterns come before conversion?** Prior-year giving (especially the group giving about $600), former major status, giving every year, long tenure, an upgrade gift, giving more than the year before, and a soft credit in an earlier year. Monthly sustainers convert less often.
+6. **Which giving patterns come before conversion?** Prior-year giving (especially the group giving about $600), former major status, giving every year and long tenure (short histories convert at about a fifth of the rate their giving predicts), and a soft credit in an earlier year. Upgrade gifts, soft credits in FY t, and giving more than the year before look strong overall but add little once prior-year giving is held constant. Monthly sustainers convert less often.
 7. **Do solicitation, Passport, or UofU fields help?** Solicitation and Passport add little once prior-year giving is known. The UofU fields are built from PBS giving and leak the outcome.
 8. **How different is FY2026?** More first-time donors, more returning donors, and higher giving from existing donors. Conversion rose, partly on its own and partly through the cultivation program, but the ranking of who converts did not change.
 9. **Does the cultivation program matter?** Yes. Contact roughly doubles conversion (`{python} pct(eff["all selected donors"]["contacted_rate"], 2)` versus `{python} pct(eff["all selected donors"]["held_out_rate"], 2)`), and `{python} pct(ps_tot["selected_in_fy_t"] / ps_tot["new_majors_next_year"], 0)` of new major donors from FY2023 to FY2026 had been selected the year before.
@@ -2669,8 +2721,8 @@ The introduction listed fifteen questions, ten from planning and five added duri
 
 **Features**
 
-- Use: prior-year total and amounts from earlier years, former major status, years given in the last five, years since first gift, change from the previous year, upgrade and additional gifts in FY t, soft credits through FY t, monthly sustainer status and amount, recency (allowing it to interact with sustainer status), age shifted to FY t, and gender with "Unknown" kept as its own level.
-- Optional, expected to add little: solicitation counts and responses, communication channels, Passport viewing with a "no viewing record" flag, state, spouse on file.
+- Use: prior-year total and amounts from earlier years, former major status, years given in the last five, years since first gift, change from the previous year, soft credits before FY t, monthly sustainer status and amount, recency (allowing it to interact with sustainer status), age shifted to FY t, and gender with "Unknown" kept as its own level.
+- Optional, expected to add little: upgrade and additional gifts in FY t, soft credits in FY t, solicitation counts and responses, communication channels, Passport viewing with a "no viewing record" flag, state, spouse on file.
 - Test separately: constituent type.
 - Training-only controls: contacted and held-out flags from the cultivation program, set to "not selected" when scoring.
 - Exclude: major donor class, annual giving group, sustainer flag, the three UofU fields, tender type, and anything measured after the prediction date, including soft credits, solicitations, and gift labels from the outcome years.

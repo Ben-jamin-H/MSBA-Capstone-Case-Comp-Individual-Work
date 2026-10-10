@@ -76,7 +76,7 @@ Ranking eligible donors by prior-year giving alone puts **83% to 91% of 12 month
 
 ### Which signals matter
 
-Beyond prior-year giving, the strongest signals are former major status, an upgrade gift in the most recent year, a soft credit in an earlier year, giving in all of the last five years, and long tenure. Monthly sustainers convert less often. Solicitation history and Passport viewing add little once giving is known.
+Beyond prior-year giving, the strongest signals are former major status, a soft credit in an earlier year, and the length of a donor's giving history: first-year donors and donors with no gift the year before convert at about a fifth of the rate their giving predicts. Monthly sustainers convert less often. Upgrade gifts, same-year soft credits, solicitation history, and Passport viewing look strong in overall rates but add little once prior-year giving is held constant.
 
 ![Conversion lift by feature level](assets/conversion_lift.png)
 
