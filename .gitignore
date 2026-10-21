@@ -33,6 +33,9 @@ __pycache__/
 .ipynb_checkpoints/
 venv/
 .venv/
+catboost_info/
+model_cache/
+outputs/
 
 # -------------------------------------------------------------------
 # IDE AND OS FILES

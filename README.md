@@ -2,10 +2,10 @@
 
 **Author:** Benjamin Hogan
 **Course:** IS 6813, MSBA Capstone, University of Utah (Fall 2026)
-**Tools:** Python · Polars · plotnine · Quarto
-**Status:** Work in progress. Exploratory data analysis complete, modeling underway.
+**Tools:** Python · Polars · scikit-learn · LightGBM · XGBoost · CatBoost · interpret · plotnine · Quarto
+**Status:** Individual EDA and individual modeling complete. Group synthesis and final deliverables in progress.
 
-> **Work in progress.** This repository documents my individual work on a team capstone project. The EDA is finished and reflects the current state of the analysis. Modeling, evaluation, and the final deliverables are still in progress, and this README will be updated as they are completed. Initial results are due November 11, 2026, and the final project is due December 2, 2026.
+> **Work in progress.** This repository documents my individual work on a team capstone project. The EDA and the modeling notebook are finished. The team will compare the individual modeling notebooks and build a group notebook and the final deliverables next. Initial results are due November 11, 2026, and the final project is due December 2, 2026.
 
 ---
 
@@ -90,6 +90,30 @@ First-time donors nearly doubled in FY2026 (4,530 to 8,801), and 26% of donors w
 
 ---
 
+## Modeling Highlights (`modeling_donor_prediction.qmd`)
+
+The modeling notebook uses the team's agreed definitions from the group EDA (the shared `build_panel.py`), tests every option with time-based backtests on the FY2022 to FY2024 cohorts, and compares models with paired, couple-clustered bootstrap intervals. Decision rules were set before each comparison was run, and the FY2025 cohort was held back until the model was chosen.
+
+### Results
+
+| Outcome | Model | Recall at 1,000 | Prior-year giving ranking | Paired gain (95% interval) |
+|---|---|---|---|---|
+| Major within 12 months, FY2022 to FY2024 | L1 logistic regression | **82.8%** | 75.4% | +7.4 points (2.6 to 12.3) |
+| Same, FY2025 check (held out) | L1 logistic regression | 75.3% | 69.2% | +6.1 points (-1.3 to 13.7) |
+| Major within 3 years, FY2021 to FY2022 | L1 logistic regression | 66.4% | 58.8% | +7.6 points (3.3 to 12.3) |
+| Major within 5 years, FY2016 to FY2020 | Explainable boosting machine | 64.0% | 58.4% | +5.5 points (3.2 to 7.9) |
+
+- **21 model families were screened**, from logistic regression to gradient boosting, neural networks, and kernel methods. Penalized logistic regression won: with a few hundred converters to learn from, flexible tree models overfit until heavily regularized.
+- **Giving history is the signal.** The group EDA's 18 giving-history inputs did as well as any larger set. Solicitation history and Passport viewing added nothing once giving was known.
+- **Older training data, recency weighting, and the choice of tuning measure** did not measurably change results.
+- **Never-major donors are the hard part.** Only the 5 year model clears the never-major bar (+2.2 points, 0.2 to 4.2).
+- **The giving tier is not predictable** from giving history and is reported as an expected mix.
+- **Business value.** The model's list holds about 3 more next-year major donors a year than a ranking by prior-year giving. Even a perfect list of every converter would bring in about $96,000 a year in conversion-year giving, so the list improves how officers spend their time but cannot close a $2 million gap on its own.
+
+The notebook ends with a FY2026 working queue: 1,000 immediate-priority donors and 2,000 long-term nurture donors, each with probabilities and the main reasons they are on the list.
+
+---
+
 ## Data Quality Findings
 
 - **Copy rows, removed with content-based rules.** 36,044 payments ($447,530), 113 soft credits, and 216,128 unlinked legacy gifts ($6.3M) are copies of other rows with one link removed or the amount set to $0. The data dictionary documents them, and their IDs carry copy labels, but the cleaning rules use only the content of each row (a broken link or $0 amount plus an otherwise identical valid row). The labels are used only to confirm the rules, and the two agree exactly.
@@ -118,12 +142,18 @@ The team planned to revise the business problem statement after the EDA. The not
 
 ```
 MSBA-Capstone-Case-Comp-Individual-Work/
-├── README.md                     # This file
-├── eda_donor_prediction.qmd      # Exploratory data analysis (Quarto source)
-├── eda_donor_prediction.html     # Rendered EDA report (self-contained)
-├── assets/                       # Figures used in this README
-├── tables/                       # Data release (not tracked in git)
-└── data_cache/                   # Parquet cache built on first render (not tracked)
+├── README.md                        # This file
+├── eda_donor_prediction.qmd         # Exploratory data analysis (Quarto source)
+├── eda_donor_prediction.html        # Rendered EDA report (self-contained)
+├── modeling_donor_prediction.qmd    # Modeling notebook (Quarto source)
+├── modeling_donor_prediction.html   # Rendered modeling report (self-contained)
+├── build_panel.py                   # Shared data build from the team's group EDA
+├── requirements.txt                 # Python environment for the modeling notebook
+├── assets/                          # Figures used in this README
+├── tables/                          # Data release (not tracked in git)
+├── data_cache/                      # Parquet cache built on first render (not tracked)
+├── model_cache/                     # Saved model fits (not tracked)
+└── outputs/                         # FY2026 working queue (not tracked)
 ```
 
 ---
@@ -139,10 +169,10 @@ MSBA-Capstone-Case-Comp-Individual-Work/
    ```
 
 2. Copy the `tables/` folder into the root of this repository.
-3. Install the Python packages: `pip install polars pyarrow pandas plotnine jupyter`
-4. Render the notebook with Quarto: `quarto render eda_donor_prediction.qmd`
+3. **EDA:** install `pip install polars pyarrow pandas plotnine jupyter` and render with `quarto render eda_donor_prediction.qmd`. The first render converts the CSV files to Parquet in `data_cache/` and takes about a minute.
+4. **Modeling:** create a Python 3.13 environment, install `pip install -r requirements.txt`, and render with Quarto pointed at that environment (for example `QUARTO_PYTHON=.venv/Scripts/python.exe quarto render modeling_donor_prediction.qmd`). The first render fits every model and takes about 14 hours of computing time; the fits are saved to `model_cache/`, and later renders take about 15 minutes.
 
-The first render converts the CSV files to Parquet in `data_cache/` and takes about a minute. To view the finished report without running anything, download `eda_donor_prediction.html` and open it in a browser.
+To view the finished reports without running anything, download the `.html` files and open them in a browser.
 
 ---
 
@@ -152,12 +182,14 @@ The first render converts the CSV files to Parquet in `data_cache/` and takes ab
 - [x] Data quality review and concerns list for the instructor
 - [x] Proposed revisions to the business problem statement
 - [ ] Group EDA synthesis with the team
-- [ ] Feature pipeline built at each prediction date with leakage checks
-- [ ] Baselines: prior-year giving, RFV, and officer selection
-- [ ] Candidate models with time-based backtesting
-- [ ] Tier prediction
+- [x] Feature pipeline built at each prediction date with leakage checks
+- [x] Baselines: prior-year giving, RFV, and officer selection
+- [x] Candidate models with time-based backtesting
+- [x] Tier prediction
+- [x] Working-queue prototype (FY2026)
+- [x] Model documentation and individual results
+- [ ] Group modeling notebook with the team
 - [ ] Working-queue dashboard and backtest view
-- [ ] Model documentation and final results
 
 ---
 
@@ -167,5 +199,6 @@ The first render converts the CSV files to Parquet in `data_cache/` and takes ab
 |---|---|
 | **Python** | Core language |
 | **Polars** | Data wrangling, panel construction, and feature building |
+| **scikit-learn, LightGBM, XGBoost, CatBoost, interpret** | Model screening, tuning, and validation |
 | **plotnine** | Visualization |
 | **Quarto** | Reproducible reporting (.qmd to rendered HTML) |
